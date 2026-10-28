@@ -13,8 +13,8 @@ FEATURE_ROW_HEIGHT = 154
 FEATURE_VISIBLE_ROWS = 5
 FEATURE_CONTROL_LEFT = 1748
 FEATURE_CONTROL_RIGHT = 2118
-FEATURE_BUTTON_TOP = 64
 FEATURE_BUTTON_HEIGHT = 80
+FEATURE_BUTTON_TOP = (FEATURE_ROW_HEIGHT - FEATURE_BUTTON_HEIGHT) / 2
 FEATURE_ACTION_MARGIN = 36
 FEATURE_PAGE_COUNTER_WIDTH = 160
 FEATURE_FOOTER_CENTER = 1015
@@ -303,6 +303,10 @@ def feature_action_rects(row: FeatureRow, y: float) -> tuple[tuple[float, float,
                for index in range(len(row.actions)))
 
 
+def feature_stepper_rects(y: float) -> tuple[tuple[float, float, float, float], ...]:
+  return tuple((x, y + FEATURE_BUTTON_TOP, 155, FEATURE_BUTTON_HEIGHT) for x in (1760, 1940))
+
+
 def feature_scroll(scroll: int, direction: int, row_count: int) -> int:
   last_page = max(0, row_count - 1) // FEATURE_VISIBLE_ROWS * FEATURE_VISIBLE_ROWS
   return max(0, min(last_page, scroll + direction * FEATURE_VISIBLE_ROWS))
@@ -416,9 +420,10 @@ class FeatureInput:
           return FeatureUiAction("change", row) if FEATURE_ACTION_MARGIN <= local_y <= FEATURE_ROW_HEIGHT - FEATURE_ACTION_MARGIN else None
         if boolean_value(row) is not None:
           return FeatureUiAction("change", row, -1 if x < 1930 else 1) if 18 <= local_y <= FEATURE_ROW_HEIGHT - 18 else None
-        if row.key and FEATURE_BUTTON_TOP <= local_y <= FEATURE_BUTTON_TOP + FEATURE_BUTTON_HEIGHT:
-          if 1760 <= x <= 1915 or 1940 <= x <= 2095:
-            return FeatureUiAction("change", row, -1 if x < 1930 else 1)
+        if row.key:
+          for direction, (bx, by, width, height) in zip((-1, 1), feature_stepper_rects(row_top + visible * FEATURE_ROW_HEIGHT), strict=True):
+            if bx <= x <= bx + width and by <= y <= by + height:
+              return FeatureUiAction("change", row, direction)
       if row.key or row.value or row.reason:
         return FeatureUiAction("details", row)
     return None

@@ -675,19 +675,91 @@ class FeatureVisualTests(unittest.TestCase):
           self.assertEqual([call.args[0] for call in fonts.draw.call_args_list], expected[1:] if expanded and back else expected)
           self.assertEqual(rl.draw_line.call_count, int(back and not expanded))
 
+  def test_stepper_buttons_keep_full_size_and_center_in_each_row(self):
+    self.drawing()
+    rows = tuple(FeatureRow(str(index), f"Number {index}", "75", step=5, available=True) for index in range(2))
+    for expanded in (True, False):
+      with self.subTest(expanded=expanded):
+        fonts = fake_fonts()
+        state = FeatureSettingsState(rows=rows, sidebar_expanded=expanded, subtitle="Help")
+        rl.draw_rectangle_rounded.reset_mock()
+        view.FeatureSettingsView(fonts).render(state)
+        buttons = [call.args[0] for call in rl.draw_rectangle_rounded.call_args_list
+                   if call.args[0].width == 155]
+        expected = [(x, feature_row_top(state) + index * 154 + 37, 155, 80)
+                    for index in range(2) for x in (1760, 1940)]
+        self.assertEqual([(rect.x, rect.y, rect.width, rect.height) for rect in buttons], expected)
+        for text, x in (("-", 1760), ("+", 1940)):
+          labels = [call for call in fonts.draw.call_args_list if call.args[0] == text]
+          self.assertEqual(len(labels), 2)
+          for index, label in enumerate(labels):
+            self.assertAlmostEqual(label.args[3] + fonts.measure(*label.args[:3]).width / 2, x + 77.5)
+            top, bottom = fonts.vertical_ink(*label.args[:3])
+            self.assertAlmostEqual(label.args[4] + (top + bottom) / 2, feature_row_top(state) + index * 154 + 77)
+
+  def test_stepper_value_matches_toggle_treatment_and_clears_long_label_and_detail(self):
+    self.drawing()
+    for expanded in (True, False):
+      for value in ("75", "Saved value " * 20):
+        with self.subTest(expanded=expanded, value=value):
+          fonts = fake_fonts()
+          row = FeatureRow("number", "Brightness " * 30, value, step=5, available=True, reason="Detail " * 40)
+          toggle = FeatureRow("switch", "Switch", "On", choices=("Off", "On"), available=True)
+          state = FeatureSettingsState(rows=(row, toggle), sidebar_expanded=expanded)
+          view.FeatureSettingsView(fonts).render(state)
+          calls = fonts.draw.call_args_list
+          saved = next(call for call in calls if call.args[0].startswith("75" if value == "75" else "Saved value"))
+          on = next(call for call in calls if call.args[0] == "On")
+          self.assertEqual(saved.args[1:3], (FontRole.NORMAL, view.LABEL_SIZE))
+          self.assertEqual(saved.args[1:3], on.args[1:3])
+          self.assertIs(saved.args[-1], geometry.TEXT_PRIMARY)
+          self.assertIs(saved.args[-1], on.args[-1])
+          width = fonts.measure(*saved.args[:3]).width
+          self.assertLessEqual(width, 360)
+          self.assertAlmostEqual(saved.args[3] + width, 1732)
+          top, bottom = fonts.vertical_ink(*saved.args[:3])
+          self.assertAlmostEqual(saved.args[4] + (top + bottom) / 2, feature_row_top(state) + 77)
+          if value == "75":
+            self.assertEqual(saved.args[0], value)
+          else:
+            self.assertNotEqual(saved.args[0], value)
+          for prefix, full in (("Brightness", row.label), ("Detail", row.reason)):
+            text = next(call for call in calls if call.args[0].startswith(prefix))
+            self.assertNotEqual(text.args[0], full)
+            right = text.args[3] + fonts.measure(*text.args[:3]).width
+            self.assertLessEqual(right, 1348)
+            self.assertLessEqual(right + 24, saved.args[3])
+
   def test_numeric_value_is_read_only_and_buttons_keep_source_binding(self):
     row = FeatureRow("number", "Number", "75", b"75", step=5, available=True)
-    state = FeatureSettingsState(rows=(row,))
-    self.assertEqual(FeatureInput.target(1930, FEATURE_ROW_TOP + 50, state).kind, "details")
-    self.assertEqual(FeatureInput.target(1820, FEATURE_ROW_TOP + 140, state).direction, -1)
-    self.assertEqual(FeatureInput.target(2000, FEATURE_ROW_TOP + 140, state).direction, 1)
-    self.assertEqual(FeatureInput.target(1925, FEATURE_ROW_TOP + 140, state).kind, "details")
-    self.assertIsNone(FeatureInput.target(2000, FEATURE_ROW_TOP + 140, replace(state, rows=(replace(row, available=False),))))
-    actions = []
-    owner = FeatureInput(actions.append)
-    owner.press(2000, FEATURE_ROW_TOP + 140, state)
-    owner.release(2000, FEATURE_ROW_TOP + 140, replace(state, sidebar_expanded=False))
-    self.assertFalse(actions)
+    for expanded in (True, False):
+      state = FeatureSettingsState(rows=(row,), sidebar_expanded=expanded)
+      actions = []
+      owner = FeatureInput(actions.append)
+      for x, direction in ((1760, -1), (1820, -1), (1915, -1), (1940, 1), (2000, 1), (2095, 1)):
+        for local_y in (37, 50, 117):
+          with self.subTest(expanded=expanded, x=x, local_y=local_y):
+            y = FEATURE_ROW_TOP + local_y
+            expected = FeatureUiAction("change", row, direction)
+            self.assertEqual(FeatureInput.target(x, y, state), expected)
+            owner.press(x, y, state)
+            owner.release(x, y, state)
+            self.assertEqual(actions.pop(), expected)
+      misses = [(x, local_y) for x in (1820, 2000) for local_y in (36, 118, 140)]
+      misses += [(x, 50) for x in (1700, 1759, 1916, 1925, 1930, 1939, 2096)]
+      for x, local_y in misses:
+        with self.subTest(expanded=expanded, miss=(x, local_y)):
+          y = FEATURE_ROW_TOP + local_y
+          self.assertEqual(FeatureInput.target(x, y, state), FeatureUiAction("details", row))
+          owner.press(x, y, state)
+          owner.release(x, y, state)
+          self.assertFalse(any(action.kind == "change" for action in actions))
+          actions.clear()
+      disabled = replace(state, rows=(replace(row, available=False),))
+      self.assertIsNone(FeatureInput.target(2000, FEATURE_ROW_TOP + 50, disabled))
+      owner.press(2000, FEATURE_ROW_TOP + 50, state)
+      owner.release(2000, FEATURE_ROW_TOP + 50, replace(state, sidebar_expanded=not expanded))
+      self.assertFalse(actions)
 
   def test_header_taps_are_inert_except_collapsed_back(self):
     row = FeatureRow("key", "Setting", "On")

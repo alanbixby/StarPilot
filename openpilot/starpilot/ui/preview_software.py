@@ -20,6 +20,10 @@ def digest(path: Path) -> str:
   return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def state_report(state: SoftwareState) -> dict:
+  return asdict(state) | {"available_actions": sorted(action.value for action in state.available_actions)}
+
+
 def main() -> None:
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument("--font-directory", type=Path, required=True)
@@ -68,7 +72,7 @@ def main() -> None:
           "profile": Profile.LARGE,
           "dimensions": [width, height],
           "development_only": True,
-          "state": asdict(state),
+          "state": state_report(state),
           "rgba_sha256": rgba_sha,
           "png_sha256": digest(args.output / "large.png"),
           "native_raylib_sha256": digest(Path(raylib._cffi.__file__)),

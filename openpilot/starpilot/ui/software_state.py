@@ -44,6 +44,8 @@ BUTTON_ROWS = (
   (SoftwareRequest.OPEN_ERROR_LOG, 5),
 )
 
+CONTENT_RECT = (550, 50, 1560, 990)
+
 
 def button_rect(row: int) -> tuple[int, int, int, int]:
   return 1860, 50 + row * 171 + 35, 250, 100
@@ -65,7 +67,8 @@ class SoftwareInput:
 
   @staticmethod
   def _target(x: float, y: float, state: SoftwareState) -> SoftwareRequest | None:
-    if not (550 <= x < 2110 and 50 <= y < 1030):
+    left, top, width, height = CONTENT_RECT
+    if not (left <= x < left + width and top <= y < top + height):
       return None
     tx, ty, tw, th = TOGGLE_RECT
     if tx <= x < tx + tw and ty <= y < ty + th:

@@ -4,7 +4,7 @@ import pyray as rl
 
 from openpilot.starpilot.ui import clip
 
-from openpilot.starpilot.ui.device_state import BUTTON_ROWS, DeviceRequest, DeviceState, button_rect, request_enabled
+from openpilot.starpilot.ui.device_state import BUTTON_ROWS, CONTENT_RECT, DeviceRequest, DeviceState, button_rect, request_enabled
 from openpilot.starpilot.ui.presentation import BitmapFonts, FontRole, Profile
 
 ROW_TITLES = ("Dongle ID", "Serial", "Pair with Galaxy", "Driver Camera", "Reset Driver Monitoring", "Reset Calibration")
@@ -26,13 +26,13 @@ class DeviceView:
 
   def render(self, state: DeviceState) -> None:
     rl.draw_rectangle_rounded(rl.Rectangle(510, 10, 1640, 1060), 0.04, 30, rl.BLACK)
-    clip.begin_scissor_mode(550, 50, 1560, 980)
+    clip.begin_scissor_mode(*CONTENT_RECT)
     try:
       for index, title in enumerate(ROW_TITLES):
         if index == 2 and state.galaxy_local_only:
           title = "Galaxy local access"
         top = 50 + index * 171
-        if top >= 1030:
+        if top >= CONTENT_RECT[1] + CONTENT_RECT[3]:
           break
         size = self.fonts.measure(title, FontRole.NORMAL, 50)
         self.fonts.draw(title, FontRole.NORMAL, 50, 570, top + (170 - size.height) // 2)

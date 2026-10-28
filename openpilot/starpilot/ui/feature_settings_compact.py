@@ -6,6 +6,8 @@ from openpilot.starpilot.ui.lane_change_feature import confirm_question as lane_
 
 from collections.abc import Callable
 from dataclasses import replace
+from functools import cache
+import re
 from typing import Protocol
 
 from openpilot.starpilot.ui.vehicle_bool import VEHICLE_BOOL_KEYS, confirmation_question as vehicle_question
@@ -17,10 +19,36 @@ from openpilot.starpilot.ui.lane_change_feature import KEYS as LANE_CHANGE_KEYS,
 from openpilot.starpilot.ui.long_profile_feature import long_confirm_question
 from openpilot.starpilot.ui.conditional_feature import confirmation_question as conditional_question
 from openpilot.starpilot.ui.controller_feature import SETUP_ACTION, SETUP_QUESTION
-from openpilot.system.ui.lib.application import gui_app
+from openpilot.system.ui.lib.application import EXTRA_FONT_CHARS, gui_app
+from openpilot.system.ui.lib.multilang import FONT_FALLBACK_LANGUAGES, TRANSLATIONS_DIR, multilang
 from openpilot.system.ui.widgets.scroller import NavScroller
 from openpilot.selfdrive.ui.mici.widgets.button import BigButton, GreyBigButton
 from openpilot.selfdrive.ui.mici.widgets.dialog import BigConfirmationDialog, BigConfirmationCircleButton, SettingDescriptionDialog
+
+
+# Keep owner typography intact for other profiles; substitute only at the card boundary.
+_COMPACT_TEXT_TRANSLATIONS = {
+  0x2018: "'", 0x2019: "'", 0x201C: '"', 0x201D: '"',
+  0x2014: " - ", 0x2026: "...", 0x00B7: ". ", 0x00B2: "2",
+}
+
+
+@cache
+def _compact_codepoints() -> frozenset[int]:
+  # Match GuiApplication._load_fonts without requiring a graphics context.
+  chars = set(map(chr, range(32, 127))) | set(EXTRA_FONT_CHARS)
+  for code in multilang.languages.values():
+    if code not in FONT_FALLBACK_LANGUAGES:
+      chars.update(TRANSLATIONS_DIR.joinpath(f"app_{code}.po").read_text(encoding="utf-8"))
+  return frozenset(map(ord, chars))
+
+
+def _compact_text(text: str) -> str:
+  text = text.translate(_COMPACT_TEXT_TRANSLATIONS)
+  codepoints = _compact_codepoints()
+  text = " ".join("".join(char for char in text if ord(char) in codepoints).split())
+  return re.sub(r"\.(?: +\.)+", ".", text).replace(" .", ".")
+
 
 class FeatureSession(Protocol):
   def feature_snapshot(self, page: str) -> FeatureSettingsState: ...
@@ -45,15 +73,15 @@ class FeatureSettingsCompact:
     state = self.session.feature_snapshot(page_name)
     def refresh() -> None:
       self._populate(page, page_name)
-    cards = [GreyBigButton(state.title.lower(), state.subtitle.lower())]
+    cards = [GreyBigButton(_compact_text(state.title.lower()), _compact_text(state.subtitle.lower()))]
     for row in state.rows:
       if row.page and row.available:
-        button = BigButton(row.label.lower(), row.value.lower())
+        button = BigButton(_compact_text(row.label.lower()), _compact_text(row.value.lower()))
         button.set_click_callback(lambda name=row.page: self.open(name))
         cards.append(button)
       elif (row.key in FEATURE_CONFIRM_ACTIONS or
             is_long_confirm_action(row.key)):
-        button = BigButton("reset invalid profiles" if row.key == "reset_profiles" else row.label.lower(),
+        button = BigButton("reset invalid profiles" if row.key == "reset_profiles" else _compact_text(row.label.lower()),
                            "")
         button.set_enabled(row.available)
         button.set_click_callback(lambda selected=row: self._confirm_reset(selected, refresh, page))
@@ -64,7 +92,7 @@ class FeatureSettingsCompact:
         detail = value_text(row) if row.key == "LaneCenteringStrength" else (row.value + " " + row.unit).strip()
         if value_reason(row):
           detail += ". " + value_reason(row)
-        cards.append(GreyBigButton(row.label.lower(), detail.lower()))
+        cards.append(GreyBigButton(_compact_text(row.label.lower()), _compact_text(detail.lower())))
     page._scroller.items.clear()
     page._scroller.add_widgets(cards)
 
@@ -77,7 +105,7 @@ class FeatureSettingsCompact:
       detail = value_text(row) if row.key == "LaneCenteringStrength" else (row.value + " " + row.unit).strip()
       if value_reason(row):
         detail += ". " + value_reason(row)
-      button = BigButton(label, detail)
+      button = BigButton(_compact_text(label), _compact_text(detail))
 
       def clicked(source=row, direction=direction) -> None:
         request = row_change(source, direction)

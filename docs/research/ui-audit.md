@@ -18,7 +18,7 @@ All captures use the native renderer with isolated host Params, as documented in
 ./dev python -m openpilot.starpilot.ui.preview_{typography,home,settings,device,software,slc_actions} ...
 ```
 
-Coverage included 32 large and 7 compact shell scenes, plus about 80 narrower captures. The narrower set
+Coverage included 31 large and 7 compact shell scenes, plus about 80 narrower captures. The narrower set
 covered compact alerts with real event strings and the comma four (`mici`) event table, compact settings
 cards, signs, SLC actions, torque bar extremes and lane notices.
 
@@ -101,6 +101,13 @@ evidence either.
 All PRs are drafts on `alanbixby/StarPilot`. Each layer passes the full `openpilot/starpilot/ui/tests`
 directory on its own.
 
+Recorded runs for implementation layers 1–5 passed 2812, 2839, 2870, 2884, and 2901 tests, respectively,
+with four skipped at each layer. These branch-loop execution records retain output tails rather than
+per-layer SHA bindings. An independent parent run at documentation tip
+`820c9c7be3514f6faa1dffc196cb4bd9058a17ae` passed **2901 tests, four skipped**, using
+`./dev python -m pytest -o addopts='' -q openpilot/starpilot/ui/tests`. The separately recorded replay run
+passed 225 tests, two skipped, with `test_export.py` excluded.
+
 | Layer | Branch | PR | Change |
 |---|---|---|---|
 | 1 | `fix/ui-layout-foundation` | #1 → `Dom` | Large stepper alignment |
@@ -110,6 +117,7 @@ directory on its own.
 | 5 | `fix/large-software-device-panels` | #12 | Large Software/Device panels |
 | 6 | `docs/ui-audit` | #15 | This report |
 
-Two failures outside the stack were observed in the shared host runtime. Replay export can't load
+Two additional failure sets were observed during broader checks in the shared host runtime. Replay export can't load
 `libmedia_mux.so`, which `./dev python` doesn't build. Galaxy pairing tests fail on slug assertions. The stack
-touches no export, pairing or Galaxy code.
+touches no export, pairing or Galaxy code. The Galaxy failures were not reproduced on an untouched baseline,
+so their origin is unconfirmed.

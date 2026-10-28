@@ -14,6 +14,7 @@ from opendbc.safety.tests.libsafety import libsafety_py
 class TestGmVoltCc(unittest.TestCase):
   def setUp(self):
     self.safety = libsafety_py.libsafety
+    self.safety.set_alternative_experience(0)
     self.release = self.safety.set_safety_hooks(structs.CarParams.SafetyModel.allOutput, 0) != 0
     fp = gen_empty_fingerprint()
     fp[0].update({0xBE: 6, 0x3D1: 8, 0xC9: 8, 0x1E1: 7, 0x1F5: 8, 0x34A: 5, 0x1C4: 8, 0xBD: 7})
@@ -178,25 +179,29 @@ if __name__ == '__main__':
 
 def test_volt_f1_uses_six_count_threshold_and_independent_c9_without_malibu_bit():
   safety = libsafety_py.libsafety
-  release = safety.set_safety_hooks(structs.CarParams.SafetyModel.allOutput, 0) != 0
-  safety.init_tests()
-  safety.set_alternative_experience(32)
-  assert safety.set_safety_hooks(structs.CarParams.SafetyModel.gm, 0xC163) == 0
-  if release:
-    # RELEASE never acquires this development-only no-ACC actuator owner.
-    assert not safety.safety_tx_hook(libsafety_py.make_CANPacket(0x180, 0, bytes(4)))
-    assert not safety.safety_tx_hook(libsafety_py.make_CANPacket(0x1E1, 0, bytes(7)))
-    return
-  for raw in range(256):
-    for malibu_bit in (False, True):
-      for c9 in (False, True):
-        safety.init_tests()
-        safety.set_alternative_experience(32)
-        assert safety.set_safety_hooks(structs.CarParams.SafetyModel.gm, 0xC163) == 0
-        safety.set_timer(1_000_000)
-        # The same physical bit means Malibu brake, but is not Volt's source.
-        f1 = bytes([int(malibu_bit) << 1, raw, 0, 0, 0, 0])
-        status = bytes([0, 0, 0, 0, 0, int(c9), 0, 0])
-        assert safety.safety_rx_hook(libsafety_py.make_CANPacket(0xF1, 0, f1))
-        assert safety.safety_rx_hook(libsafety_py.make_CANPacket(0xC9, 0, status))
-        assert bool(safety.get_brake_pressed_prev()) == bool(raw >= 6 or c9), (raw, malibu_bit, c9)
+  try:
+    release = safety.set_safety_hooks(structs.CarParams.SafetyModel.allOutput, 0) != 0
+    safety.init_tests()
+    safety.set_alternative_experience(32)
+    assert safety.set_safety_hooks(structs.CarParams.SafetyModel.gm, 0xC163) == 0
+    if release:
+      # RELEASE never acquires this development-only no-ACC actuator owner.
+      assert not safety.safety_tx_hook(libsafety_py.make_CANPacket(0x180, 0, bytes(4)))
+      assert not safety.safety_tx_hook(libsafety_py.make_CANPacket(0x1E1, 0, bytes(7)))
+      return
+    for raw in range(256):
+      for malibu_bit in (False, True):
+        for c9 in (False, True):
+          safety.init_tests()
+          safety.set_alternative_experience(32)
+          assert safety.set_safety_hooks(structs.CarParams.SafetyModel.gm, 0xC163) == 0
+          safety.set_timer(1_000_000)
+          # The same physical bit means Malibu brake, but is not Volt's source.
+          f1 = bytes([int(malibu_bit) << 1, raw, 0, 0, 0, 0])
+          status = bytes([0, 0, 0, 0, 0, int(c9), 0, 0])
+          assert safety.safety_rx_hook(libsafety_py.make_CANPacket(0xF1, 0, f1))
+          assert safety.safety_rx_hook(libsafety_py.make_CANPacket(0xC9, 0, status))
+          assert bool(safety.get_brake_pressed_prev()) == bool(raw >= 6 or c9), (raw, malibu_bit, c9)
+  finally:
+    safety.set_alternative_experience(0)
+    safety.set_safety_hooks(structs.CarParams.SafetyModel.noOutput, 0)

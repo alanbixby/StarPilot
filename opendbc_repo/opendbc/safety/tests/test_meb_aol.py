@@ -89,6 +89,36 @@ def test_actual_meb_native_full_engagement_brake_reverse_and_long_off(gen2, stoc
 
 
 @pytest.mark.parametrize('gen2', (False, True))
+def test_meb_speed_mismatch_revokes_lateral_until_physical_rearm(gen2):
+  owner = _MebOwner(gen2, False, False)
+  try:
+    for _ in range(15):
+      owner.feed()
+    command = owner.packet('HCA_03', {'Curvature': 0, 'Power': 4, 'RequestStatus': 4, 'HighSendRate': 1})
+    assert owner.safety.aol_get_permission_mask() == 1
+    assert not owner.safety.get_controls_allowed()
+    assert owner.safety.safety_tx_hook(command)
+
+    # Valid ESP speed disagrees with the 72 km/h wheel speeds, without an RX fault.
+    owner.time += 10_000
+    owner.safety.set_timer(owner.time)
+    assert owner.safety.safety_rx_hook(owner.packet('ESP_21', {'ESP_v_Signal': 102}))
+    assert [bool(owner.safety.safety_tx_hook(command)) for _ in range(3)] == [False, False, False]
+    assert owner.safety.aol_get_permission_mask() == 0
+    for _ in range(20):
+      owner.feed()
+    assert owner.safety.aol_get_permission_mask() == 0
+    assert not owner.safety.safety_tx_hook(command)
+
+    owner.feed(set_button=True)
+    owner.feed()
+    assert owner.safety.aol_get_permission_mask() == 3
+    assert owner.safety.safety_tx_hook(command)
+  finally:
+    owner.close()
+
+
+@pytest.mark.parametrize('gen2', (False, True))
 def test_meb_gear_crc_counter_and_wrong_bus_withdraw(gen2):
   owner = _MebOwner(gen2, False, False)
   try:

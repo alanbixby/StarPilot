@@ -440,7 +440,7 @@ class SoundsSettingsTests(unittest.TestCase):
           compact._populate(page)
           next(item for item in page.items if item.label == label.lower() + " +").click()
           self.assertEqual(read_volume(self.params, key).value, 55)
-          next(item for item in page.items if item.label == label.lower() + " −").click()
+          next(item for item in page.items if item.label == label.lower() + " -").click()
           self.assertEqual(read_volume(self.params, key).value, 50)
           stale = next(item for item in page.items if item.label == label.lower() + " +")
           self.params.put(key, 60, block=True)

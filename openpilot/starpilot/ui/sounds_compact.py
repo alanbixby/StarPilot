@@ -37,7 +37,7 @@ class SoundsCompact:
         cards.append(GreyBigButton(row.label.lower(), f"{value}. {row.reason}".lower()))
         continue
       for direction in ((1,) if row.repair_value else (-1, 1)):
-        label = row.label.lower() + (f" set {row.repair_value.lower()}" if row.repair_value else " −" if direction < 0 else " +")
+        label = row.label.lower() + (f" set {row.repair_value.lower()}" if row.repair_value else " -" if direction < 0 else " +")
         button = BigButton(label, value.lower())
         def clicked(source=row, step=direction) -> None:
           request = row_change(source, step)

@@ -58,7 +58,7 @@ class TestNativeLaneStrength(unittest.TestCase):
     with patch.object(compact, 'BigButton', Button):
       cards = adapter._editable(self.row(), lambda: refreshed.append(True), Mock(spec=compact.NavScroller))
       self.assertEqual(len(cards), 2)
-      self.assertTrue(all(card.detail.startswith('5 · 1–10; 5 is normal') for card in cards))
+      self.assertTrue(all(card.detail.startswith('5. 1–10; 5 is normal') for card in cards))
       cards[1].click()
     self.assertEqual(sent[0].value, '120')
     self.assertEqual(sent[0].expected, b'1.5')

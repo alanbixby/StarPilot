@@ -53,7 +53,16 @@ def assert_fresh_ordinary_recovery(sd, axis, command, source):
 
 class IoniqAvailabilityTests(unittest.TestCase):
   def _authority_callers(self, full_op, *, cp=None, intent_companion=None, genuine_events=False, initial_panda_config=None):
-    self.enterContext(mock.patch.dict(os.environ, {'SIMULATION': '0'}))
+    previous_simulation = os.environ.get('SIMULATION')
+
+    def restore_simulation():
+      if previous_simulation is None:
+        os.environ.pop('SIMULATION', None)
+      else:
+        os.environ['SIMULATION'] = previous_simulation
+
+    self.addCleanup(restore_simulation)
+    os.environ['SIMULATION'] = '0'
     self.enterContext(mock.patch('openpilot.selfdrive.selfdrived.selfdrived.REPLAY', False))
     from opendbc.car.gm.tests.test_bolt_volt_configurations import ordinary_params
     from opendbc.car.gm.values import CAR

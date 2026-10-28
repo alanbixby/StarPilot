@@ -1,5 +1,6 @@
 """GM CC lead qualification applies to the final command, independently of AOL."""
 from contextlib import ExitStack
+import os
 from unittest.mock import patch
 
 import pytest
@@ -19,6 +20,32 @@ def configuration(profile):
   if profile == 'malibu-cc-f1':
     return malibu_f1_params(release=False)
   return conventional_params(sorted(ORDINARY_CC_CAR)[0], removed=False, disabled=False)
+
+
+@pytest.mark.parametrize('simulation', [None, '0', '1'])
+def test_deferred_authority_cleanup_preserves_outer_environment_and_ipc(simulation):
+  with patch.dict(os.environ, {'AOL_REPLAY_RUNTIME': '0'}), OpenpilotPrefix():
+    if simulation is None:
+      os.environ.pop('SIMULATION', None)
+    else:
+      os.environ['SIMULATION'] = simulation
+    outer_prefix = os.environ['OPENPILOT_PREFIX']
+    case = fixture.IoniqAvailabilityTests(methodName='runTest')
+    try:
+      with OpenpilotPrefix(), patch.dict(os.environ, {'AOL_REPLAY_RUNTIME': '1'}):
+        _, controls, _ = case._authority_callers(False)
+        assert not controls.sm.simulation
+    finally:
+      # Callers defer this until after their inner contexts (and IPC directory)
+      # have exited. Cleanup must restore only the helper-owned simulation key.
+      case.doCleanups()
+
+    assert (os.environ['OPENPILOT_PREFIX'], os.environ['AOL_REPLAY_RUNTIME']) == (outer_prefix, '0')
+    assert os.environ.get('SIMULATION') == simulation
+    subscriber = messaging.SubMaster(['carState'])
+    assert subscriber.simulation == (simulation == '1')
+    assert not subscriber.seen['carState']
+    del subscriber
 
 
 @pytest.mark.parametrize('profile', ['volt-cc-f1', 'malibu-cc-f1', 'conventional-pedal'])

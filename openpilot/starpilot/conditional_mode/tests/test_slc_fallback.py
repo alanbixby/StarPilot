@@ -192,6 +192,7 @@ class SlcFallbackTests(unittest.TestCase):
             self.assertIsNone(output.command)
             evidence = evaluate_runtime(runtime, output)
             self.assertEqual((evidence.reason, evidence.proposed_experimental), (reason, False))
+            assert evidence.current_control_target_mps is not None
             self.assertAlmostEqual(evidence.current_control_target_mps, 100.0 / 3.6, places=5)
             if previous is not None:
               self.assertEqual(evaluate_runtime(runtime, previous).reason, Reason.INCONSISTENT_CYCLE)

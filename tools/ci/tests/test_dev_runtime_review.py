@@ -129,6 +129,75 @@ with runtime.locked():
       if ipc.exists():
         shutil.rmtree(ipc)
 
+  def test_prepare_wrapper_sigkill_keeps_lock_until_child_exits(self) -> None:
+    self.assert_setup_child_keeps_lock('prepare')
+
+  def test_build_wrapper_sigkill_keeps_lock_until_child_exits(self) -> None:
+    self.assert_setup_child_keeps_lock('build')
+
+  def assert_setup_child_keeps_lock(self, operation: str) -> None:
+    runtime = self.runtime
+    runtime.work.mkdir(parents=True)
+    binary_dir = runtime.venv / 'bin'
+    binary_dir.mkdir(parents=True)
+    child_pid_file = self.root / 'child.pid'
+    # Replace only the external tool: exercise real prepare/build process spawning.
+    tool = binary_dir / ('uv' if operation == 'prepare' else 'python')
+    tool.write_text(f'''#!{sys.executable}
+import os, time
+from pathlib import Path
+Path({str(child_pid_file)!r}).write_text(str(os.getpid()))
+time.sleep(30)
+''')
+    tool.chmod(0o755)
+    source_root = Path(__file__).resolve().parents[3]
+    wrapper_code = '''import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from tools.host_runtime import HostRuntime
+runtime = HostRuntime(sys.argv[2], 'shared', system='Darwin', machine='arm64')
+with runtime.locked():
+  if sys.argv[3] == 'prepare':
+    runtime.prepare()
+  else:
+    runtime.build('python', 1)
+'''
+    env = dict(os.environ, PATH=str(binary_dir) + os.pathsep + os.environ.get('PATH', ''))
+    wrapper = subprocess.Popen([sys.executable, '-c', wrapper_code, str(source_root), str(self.root), operation],
+                               env=env, start_new_session=True)
+    lock_path = runtime.cache / 'lock'
+    try:
+      deadline = time.monotonic() + 5
+      while not child_pid_file.exists() and wrapper.poll() is None and time.monotonic() < deadline:
+        time.sleep(.02)
+      self.assertTrue(child_pid_file.exists(), 'fake tool did not start')
+      wrapper.kill()
+      wrapper.wait(timeout=3)
+      os.kill(int(child_pid_file.read_text()), 0)  # The tool survived its wrapper.
+      with lock_path.open('a+') as contender:
+        with self.assertRaises(BlockingIOError):
+          fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    finally:
+      try:
+        os.killpg(wrapper.pid, signal.SIGTERM)
+      except ProcessLookupError:
+        pass
+      if wrapper.poll() is None:
+        wrapper.kill()
+        wrapper.wait(timeout=3)
+      deadline = time.monotonic() + 5
+      while time.monotonic() < deadline:
+        with lock_path.open('a+') as contender:
+          try:
+            fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+          except BlockingIOError:
+            time.sleep(.02)
+          else:
+            fcntl.flock(contender, fcntl.LOCK_UN)
+            break
+      else:
+        self.fail('fake tool did not release the lock after stopping')
+
 
 if __name__ == '__main__':
   unittest.main()

@@ -80,9 +80,11 @@ LIVE_SCRIPT = f"""// Added by ./dev galaxy --live to its host cache only: reload
 """
 
 
-def run(arguments, *, cwd, env=None, capture=False):
+def run(arguments, *, cwd, env=None, capture=False, lock_fd=None):
+  # Keep the bucket locked if this wrapper is killed while its child is alive.
+  inherited = () if lock_fd is None else (lock_fd,)
   return subprocess.run([str(arg) for arg in arguments], cwd=cwd, env=env, check=True,
-                        stdout=subprocess.PIPE if capture else None, text=capture)
+                        stdout=subprocess.PIPE if capture else None, text=capture, pass_fds=inherited)
 
 
 def git(root, *arguments):
@@ -315,7 +317,8 @@ class HostRuntime:
     inside(self.venv, self.cache)
     env = self.environment()
     env.update(UV_PROJECT_ENVIRONMENT=str(self.venv), UV_PYTHON='3.12')
-    run([uv, 'sync', '--frozen', '--extra', 'tools', '--extra', 'testing', '--extra', 'dev', '--extra', 'safety'], cwd=self.work, env=env)
+    run([uv, 'sync', '--frozen', '--extra', 'tools', '--extra', 'testing', '--extra', 'dev', '--extra', 'safety'],
+        cwd=self.work, env=env, lock_fd=self.lock_fd)
     link = self.work / '.venv'
     if link.is_symlink():
       if link.resolve() != self.venv.resolve():
@@ -333,7 +336,8 @@ class HostRuntime:
                   'openpilot/selfdrive/controls/lib/longitudinal_mpc_lib/c_generated_code/acados_ocp_solver_pyx.so']
     if command in ('onroad', 'replay', 'cabana'):
       targets += ['openpilot/tools/' + ('cabana/cabana' if command == 'cabana' else 'replay/replay')]
-    run([self.venv / 'bin/python', '-m', 'SCons', f'-j{jobs}', *targets], cwd=self.work, env=self.environment())
+    run([self.venv / 'bin/python', '-m', 'SCons', f'-j{jobs}', *targets],
+        cwd=self.work, env=self.environment(), lock_fd=self.lock_fd)
 
   def private_ipc(self):
     ipc = Path('/tmp' if self.system == 'Darwin' else '/dev/shm') / f'msgq_{self.prefix}'

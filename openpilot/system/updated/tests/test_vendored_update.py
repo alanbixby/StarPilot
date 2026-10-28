@@ -291,7 +291,7 @@ class TestVendoredUpdate(unittest.TestCase):
 
     def observe(command, cwd=None):
       result = original(command, cwd)
-      if command[:2] == ["git", "fetch"] and cwd == str(self.merged):
+      if command[0] == "git" and "fetch" in command and cwd == str(self.merged):
         fetch_missing.append([line for line in self.git(self.merged, "rev-list", "--objects", "--missing=print", "FETCH_HEAD").splitlines()
                               if line.startswith("?")])
       return result
@@ -303,7 +303,7 @@ class TestVendoredUpdate(unittest.TestCase):
     self.assert_no_partial_clone(self.finalized)
 
   def test_download_fills_blobs_missing_from_previously_filtered_fetch(self):
-    self.prepare_agnos_target()
+    target = self.prepare_agnos_target()
     # Reproduce a repository already contaminated by the old AGNOS peek.
     self.git(self.merged, "fetch", "--depth=1", "--filter=blob:none", "origin", BRANCH)
     self.assertIn("?", self.git(self.merged, "rev-list", "--objects", "--missing=print", "FETCH_HEAD"))
@@ -313,54 +313,128 @@ class TestVendoredUpdate(unittest.TestCase):
 
     def observe(command, cwd=None):
       result = original(command, cwd)
-      if command[:2] == ["git", "fetch"] and cwd == str(self.merged):
-        fetch_missing.append([line for line in self.git(self.merged, "rev-list", "--objects", "--missing=print", "FETCH_HEAD").splitlines()
+      if command[0] == "git" and "fetch" in command and cwd == str(self.merged):
+        self.assertNotIn("--refetch", command)
+        fetch_missing.append([line for line in self.git(self.merged, "rev-list", "--objects", "--missing=print", f"{target}^{{tree}}").splitlines()
                               if line.startswith("?")])
+      if command[:2] == ["git", "rev-parse"] and command[-1] == "FETCH_HEAD^{commit}":
+        self.assertEqual(result.strip(), target)
+      if command[:2] == ["git", "rev-list"] and "--missing=print" in command:
+        self.assertIn(f"{target}^{{tree}}", command)
+      if command[:2] == ["git", "checkout"]:
+        self.assertEqual(fetch_missing[-1], [])
       return result
 
     self.updated.run = observe
-    self.assertTrue(self.updater.fetch_update())
-    self.assertEqual(fetch_missing, [[]])
+    original_validate = self.updated.validate_revision
 
-  def test_filtered_download_heals_once_then_fetches_incrementally(self):
+    def offline_validate(repo, revision):
+      self.assertIn(revision, (target, "HEAD"))
+      self.assertEqual(fetch_missing[-1], [])
+      self.git(self.merged, "remote", "set-url", "origin", str(self.root / "unavailable"))
+      return original_validate(repo, revision)
+
+    self.updated.validate_revision = offline_validate
+    self.assertTrue(self.updater.fetch_update())
+    self.assertEqual(len(fetch_missing), 2)
+    self.assertTrue(fetch_missing[0])
+    self.assertEqual(fetch_missing[-1], [])
+    self.assertEqual(self.git(self.finalized, "rev-parse", "HEAD"), target)
+
+  def test_filtered_new_and_known_targets_fetch_incrementally(self):
     (self.source / "model.bin").write_bytes(os.urandom(256_000))
-    self.prepare_agnos_target()
-    self.git(self.merged, "fetch", "--depth=1", "--filter=blob:none", "origin", BRANCH)
+    self.commit_source("Large stable model")
     counter = self.root / "transfer"
     upload_pack = self.root / "upload-pack-counter"
     upload_pack.write_text('#!/bin/sh\ngit-upload-pack "$@" | tee -a ' + shlex.quote(str(counter)) + '\n')
     upload_pack.chmod(0o755)
     self.git(self.merged, "config", "remote.origin.uploadpack", str(upload_pack))
+    self.assertTrue(self.updater.fetch_update())
+    stable_cost = counter.stat().st_size
+    self.assertGreater(stable_cost, 256_000)
+    (self.source / "peeked.txt").write_text("Peeked snapshot, never installed\n")
+    self.commit_source("Peeked software update")
+    self.git(self.merged, "fetch", "--depth=1", "--filter=blob:none", "origin", BRANCH)
     original = self.updated.run
     fetched = []
     missing = []
+    target = None
 
     def observe(command, cwd=None):
       result = original(command, cwd)
-      if command[:2] == ["git", "fetch"] and cwd == str(self.merged):
+      if command[0] == "git" and "fetch" in command and cwd == str(self.merged):
         fetched.append(command)
-        missing.append([row for row in self.git(self.merged, "rev-list", "--objects", "--missing=print", "FETCH_HEAD").splitlines()
+        missing.append([row for row in self.git(self.merged, "rev-list", "--objects", "--missing=print", f"{target}^{{tree}}").splitlines()
                         if row.startswith("?")])
       return result
 
     self.updated.run = observe
+    original_validate = self.updated.validate_revision
+
+    def offline_validate(repo, revision):
+      self.assertEqual(missing[-1], [])
+      self.git(self.merged, "remote", "set-url", "origin", str(self.root / "unavailable"))
+      return original_validate(repo, revision)
+
+    self.updated.validate_revision = offline_validate
     filters = []
     transferred = []
     for update in range(2):
       (self.source / "incremental.txt").write_text(f"Small update {update}\n")
       target = self.commit_source("Incremental software update")
+      # First install a new target with a peeked parent, then a known target.
+      if update == 1:
+        self.git(self.merged, "fetch", "--depth=1", "--filter=blob:none", "origin", BRANCH)
+        self.assertIn("?", self.git(self.merged, "rev-list", "--objects", "--missing=print", f"{target}^{{tree}}"))
       self.updater.check_for_update()
       counter.write_bytes(b"")
-      self.assertTrue(self.updater.fetch_update())
+      try:
+        self.assertTrue(self.updater.fetch_update())
+      finally:
+        self.git(self.merged, "remote", "set-url", "origin", str(self.source))
       self.assertEqual(self.git(self.finalized, "rev-parse", "HEAD"), target)
       filters.append(self.git(self.finalized, "config", "--get", "--default=", "remote.origin.partialclonefilter"))
       self.assertEqual(self.git(self.finalized, "config", "remote.origin.promisor"), "true")
       transferred.append(counter.stat().st_size)
+    print(f'normal transfer bytes: stable={stable_cost}, tiny updates={transferred}')
     self.assertEqual(filters, ["", ""])
-    self.assertEqual(["--refetch" in command for command in fetched], [True, False])
-    self.assertEqual(missing, [[], []])
-    self.assertGreater(transferred[0], 256_000)
-    self.assertLess(transferred[1], transferred[0] // 10)
+    self.assertFalse(any("--refetch" in command for command in fetched))
+    self.assertEqual(len(fetched), 4)
+    self.assertTrue(missing[0])
+    self.assertTrue(missing[2])
+    self.assertEqual(missing[1::2], [[], []])
+    self.assertTrue(all(size < stable_cost // 10 for size in transferred), (stable_cost, transferred))
+
+  def test_snapshot_fill_obeys_phone_uplink_guard_before_checkout(self):
+    target = self.prepare_agnos_target()
+    self.git(self.merged, "fetch", "--depth=1", "--filter=blob:none", "origin", BRANCH)
+    self.git(self.merged, "config", "--unset", "remote.origin.partialclonefilter")
+    self.updater.check_for_update()
+    original = self.updated.run
+    blocked = False
+    fetched = []
+
+    def observe(command, cwd=None):
+      nonlocal blocked
+      if "fetch" in command:
+        fetched.append(command)
+      result = original(command, cwd)
+      if "fetch" in command:
+        blocked = True
+      return result
+
+    self.updated.run = observe
+    with patch.dict(self.updated.run_git.__globals__, {"phone_uplink_active": lambda: blocked}), \
+         patch.object(self.updated, "validate_revision") as validate:
+      with self.assertRaisesRegex(self.updated.FastUpdateError, "phone uplink"):
+        self.updater.fetch_update()
+    self.assertEqual(len(fetched), 2)
+    self.assertIn("fetch.negotiationAlgorithm=noop", fetched[-1])
+    validate.assert_not_called()
+    self.assertFalse(any(command[:2] == ["git", "checkout"] for command in self.commands))
+    self.assertEqual(self.git(self.merged, "rev-parse", "HEAD"), self.initial_commit)
+    self.assertIn("?", self.git(self.merged, "rev-list", "--objects", "--missing=print", f"{target}^{{tree}}"))
+    self.assertFalse((self.finalized / ".overlay_consistent").exists())
 
   def test_phone_uplink_check_loop_defers_without_failures_or_overlay_invalidation(self):
     target = self.prepare_agnos_target()
@@ -396,7 +470,7 @@ class TestVendoredUpdate(unittest.TestCase):
     self.assertEqual(self.updater.branches[BRANCH], target)
     self.assertTrue(self.updater.has_internet)
     self.assertEqual(self.updater.params.values["UpdaterOSUpdate"], {})
-    self.assertFalse(any(command[:2] == ["git", "fetch"] for command in self.commands))
+    self.assertFalse(any(command[0] == "git" and "fetch" in command for command in self.commands))
 
   def test_phone_uplink_activation_during_peek_does_not_fail_check(self):
     self.prepare_agnos_target()

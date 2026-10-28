@@ -545,18 +545,24 @@ class Updater:
     run(["git", "config", "--replace-all", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"], OVERLAY_MERGED)
 
     branch = self.target_branch
-    # Previously filtered commits can already be known while their blobs are
-    # absent. Force a full pack for those repos before validation or checkout.
-    refetch = ["--refetch"] if run(["git", "config", "--get", "--default=", "remote.origin.partialclonefilter"], OVERLAY_MERGED).strip() else []
-    git_fetch_output = run(["git", "fetch", "--no-filter", *refetch, "--no-recurse-submodules", "origin", branch], OVERLAY_MERGED)
-    if refetch:
-      # Heal once; retain promisor so older missing history stays fetchable.
+    filtered = run(["git", "config", "--get", "--default=", "remote.origin.partialclonefilter"], OVERLAY_MERGED).strip()
+    git_fetch_output = run(["git", "fetch", "--no-filter", "--no-recurse-submodules", "origin", branch], OVERLAY_MERGED)
+    if filtered:
+      # Retain promisor so older missing history stays fetchable.
       run(["git", "config", "--unset", "remote.origin.partialclonefilter"], OVERLAY_MERGED)
     cloudlog.info("git fetch success: %s", git_fetch_output)
 
+    fetched_commit = run(["git", "rev-parse", "FETCH_HEAD^{commit}"], OVERLAY_MERGED).strip()
+    # Fill only the install snapshot; an object fetch replaces FETCH_HEAD.
+    missing = [row[1:] for row in run(["git", "rev-list", "--objects", "--missing=print", f"{fetched_commit}^{{tree}}"],
+                                    OVERLAY_MERGED).splitlines() if row.startswith("?")]
+    if missing:
+      # Incomplete commits must not be advertised as haves for their missing blobs.
+      run(["git", "-c", "fetch.negotiationAlgorithm=noop", "fetch", "--no-filter", "--no-tags", "--no-recurse-submodules", "origin", *missing],
+          OVERLAY_MERGED)
+
     # Validate using the running updater before checking out or executing any update.
     # A branch containing gitlinks or an invalid dependency manifest is not installable.
-    fetched_commit = run(["git", "rev-parse", "FETCH_HEAD^{commit}"], OVERLAY_MERGED).strip()
     validate_revision(OVERLAY_MERGED, fetched_commit)
 
     cloudlog.info("git reset in progress")

@@ -8,11 +8,14 @@ repositories. No device paths, mounts, firmware calls, or network remotes are us
 import importlib.util
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+import unittest.mock
 from pathlib import Path
 from types import ModuleType
 from unittest.mock import Mock, patch
@@ -27,8 +30,14 @@ class MemoryParams:
   def __init__(self):
     self.values = {"UpdaterTargetBranch": BRANCH}
 
-  def get(self, key):
+  def get(self, key, **kwargs):
     return self.values.get(key)
+
+  def get_bool(self, key):
+    return bool(self.values.get(key, False))
+
+  def remove(self, key):
+    self.values.pop(key, None)
 
   def put(self, key, value, **kwargs):
     self.values[key] = value
@@ -79,6 +88,7 @@ class TestVendoredUpdate(unittest.TestCase):
     self.env_patch.start()
     self.addCleanup(self.env_patch.stop)
     self.git(self.source, "init", "-b", BRANCH)
+    self.git(self.source, "config", "uploadpack.allowFilter", "true")
     for name in DEPENDENCIES:
       folder = self.source / name
       folder.mkdir()
@@ -99,6 +109,7 @@ class TestVendoredUpdate(unittest.TestCase):
     self.git(self.merged, "config", "fetch.recurseSubmodules", "true")
 
     self.updated = load_updater()
+    self.updated.STAGING_ROOT = str(self.root)
     self.updated.OVERLAY_MERGED = str(self.merged)
     self.updated.FINALIZED = str(self.finalized)
     self.updated.BASEDIR = str(self.merged)
@@ -181,7 +192,32 @@ class TestVendoredUpdate(unittest.TestCase):
     self.assertEqual(self.git(self.finalized, "rev-parse", "HEAD"), target)
     self.assertTrue(self.updater.params.values["DoReboot"])
     self.assertTrue(self.updater.params.values["UpdateAvailable"])
-    progress.assert_called_with("rebooting", "Update installed. Restarting device.")
+    progress.assert_called_with("complete", "Update installed. Restarting device.")
+
+  def test_normal_completion_survives_recovery_before_reboot(self):
+    installed = self.root / "installed"
+    self.git(self.root, "clone", "--no-local", str(self.merged), str(installed))
+    self.updated.BASEDIR = str(installed)
+    (self.source / "panda/README.md").write_text("New native revision")
+    self.commit_source("Full update")
+    writes = []
+
+    def progress(stage, detail):
+      self.updater.params.put("UpdaterFastState", {"version": 1, "stage": stage, "detail": detail, "branch": BRANCH})
+      writes.append(stage)
+
+    def request_reboot(key, value, **kwargs):
+      if key == "DoReboot":
+        self.assertEqual(self.updater.params.values["UpdaterFastState"]["stage"], "complete")
+      self.updater.params.put(key, value, **kwargs)
+
+    with patch.object(self.updated, "init_overlay"), patch.object(self.updater.params, "put_bool", side_effect=request_reboot):
+      self.assertEqual(self.updater.normal_update(BRANCH, self.initial_commit, lambda: True, progress), "reboot-requested")
+    self.assertEqual(writes[-1], "complete")
+    completed = dict(self.updater.params.values["UpdaterFastState"])
+    self.updated.recover_fast_state(self.updater.params)
+    self.assertEqual(self.updater.params.values["UpdaterFastState"], completed)
+    self.assertTrue(self.updater.params.values["DoReboot"])
 
   def test_normal_fallback_never_reboots_after_parked_authority_is_lost(self):
     installed = self.root / "installed"
@@ -222,6 +258,154 @@ class TestVendoredUpdate(unittest.TestCase):
     self.assertEqual(self.git(self.merged, "config", "submodule.recurse"), "false")
     self.assertEqual(self.git(self.merged, "config", "fetch.recurseSubmodules"), "false")
     self.updated.handle_agnos_update.assert_not_called()
+
+  def prepare_agnos_target(self):
+    self.updated.AGNOS = True
+    self.updated.HARDWARE.get_os_version.return_value = "12"
+    (self.source / "launch_env.sh").write_text("export AGNOS_VERSION='13'\n")
+    (self.source / "panda/README.md").write_text("New native revision\n")
+    return self.commit_source("New AGNOS target")
+
+  def assert_no_partial_clone(self, repo):
+    for key in ("remote.origin.promisor", "remote.origin.partialclonefilter"):
+      self.assertEqual(self.git(repo, "config", "--get", "--default=", key), "")
+    self.assertFalse((repo / ".git/shallow").exists())
+
+  def test_agnos_peek_does_not_change_installed_or_overlay_clone(self):
+    installed = self.root / "installed"
+    self.git(self.root, "clone", "--no-local", str(self.merged), str(installed))
+    self.updated.BASEDIR = str(installed)
+    self.prepare_agnos_target()
+    self.updater.check_for_update()
+    self.assertEqual(self.updater.params.values["UpdaterOSUpdate"], {"branch": BRANCH, "required": True})
+    for repo in (installed, self.merged):
+      self.assertEqual(self.git(repo, "rev-parse", "HEAD"), self.initial_commit)
+      self.assert_no_partial_clone(repo)
+    self.assertFalse(any(path.name.startswith("agnos-version-") for path in self.root.iterdir()))
+
+  def test_agnos_check_then_download_has_all_blobs_before_checkout(self):
+    target = self.prepare_agnos_target()
+    self.updater.check_for_update()
+    fetch_missing = []
+    original = self.updated.run
+
+    def observe(command, cwd=None):
+      result = original(command, cwd)
+      if command[:2] == ["git", "fetch"] and cwd == str(self.merged):
+        fetch_missing.append([line for line in self.git(self.merged, "rev-list", "--objects", "--missing=print", "FETCH_HEAD").splitlines()
+                              if line.startswith("?")])
+      return result
+
+    self.updated.run = observe
+    self.assertTrue(self.updater.fetch_update())
+    self.assertEqual(fetch_missing, [[]])
+    self.assertEqual(self.git(self.finalized, "rev-parse", "HEAD"), target)
+    self.assert_no_partial_clone(self.finalized)
+
+  def test_download_fills_blobs_missing_from_previously_filtered_fetch(self):
+    self.prepare_agnos_target()
+    # Reproduce a repository already contaminated by the old AGNOS peek.
+    self.git(self.merged, "fetch", "--depth=1", "--filter=blob:none", "origin", BRANCH)
+    self.assertIn("?", self.git(self.merged, "rev-list", "--objects", "--missing=print", "FETCH_HEAD"))
+    self.updater.check_for_update()
+    original = self.updated.run
+    fetch_missing = []
+
+    def observe(command, cwd=None):
+      result = original(command, cwd)
+      if command[:2] == ["git", "fetch"] and cwd == str(self.merged):
+        fetch_missing.append([line for line in self.git(self.merged, "rev-list", "--objects", "--missing=print", "FETCH_HEAD").splitlines()
+                              if line.startswith("?")])
+      return result
+
+    self.updated.run = observe
+    self.assertTrue(self.updater.fetch_update())
+    self.assertEqual(fetch_missing, [[]])
+
+  def test_filtered_download_heals_once_then_fetches_incrementally(self):
+    (self.source / "model.bin").write_bytes(os.urandom(256_000))
+    self.prepare_agnos_target()
+    self.git(self.merged, "fetch", "--depth=1", "--filter=blob:none", "origin", BRANCH)
+    counter = self.root / "transfer"
+    upload_pack = self.root / "upload-pack-counter"
+    upload_pack.write_text('#!/bin/sh\ngit-upload-pack "$@" | tee -a ' + shlex.quote(str(counter)) + '\n')
+    upload_pack.chmod(0o755)
+    self.git(self.merged, "config", "remote.origin.uploadpack", str(upload_pack))
+    original = self.updated.run
+    fetched = []
+    missing = []
+
+    def observe(command, cwd=None):
+      result = original(command, cwd)
+      if command[:2] == ["git", "fetch"] and cwd == str(self.merged):
+        fetched.append(command)
+        missing.append([row for row in self.git(self.merged, "rev-list", "--objects", "--missing=print", "FETCH_HEAD").splitlines()
+                        if row.startswith("?")])
+      return result
+
+    self.updated.run = observe
+    filters = []
+    transferred = []
+    for update in range(2):
+      (self.source / "incremental.txt").write_text(f"Small update {update}\n")
+      target = self.commit_source("Incremental software update")
+      self.updater.check_for_update()
+      counter.write_bytes(b"")
+      self.assertTrue(self.updater.fetch_update())
+      self.assertEqual(self.git(self.finalized, "rev-parse", "HEAD"), target)
+      filters.append(self.git(self.finalized, "config", "--get", "--default=", "remote.origin.partialclonefilter"))
+      self.assertEqual(self.git(self.finalized, "config", "remote.origin.promisor"), "true")
+      transferred.append(counter.stat().st_size)
+    self.assertEqual(filters, ["", ""])
+    self.assertEqual(["--refetch" in command for command in fetched], [True, False])
+    self.assertEqual(missing, [[], []])
+    self.assertGreater(transferred[0], 256_000)
+    self.assertLess(transferred[1], transferred[0] // 10)
+
+  def test_phone_uplink_check_loop_defers_without_failures_or_overlay_invalidation(self):
+    target = self.prepare_agnos_target()
+    self.updated.LOCK_FILE = str(self.root / "lock")
+    self.updated.OVERLAY_INIT = self.root / ".overlay_init"
+    self.updated.OVERLAY_INIT.touch()
+    self.updater.params.put("InstallDate", "test")
+    self.updater.params.put("UpdateFailedCount", 0)
+    helper = self.updated.WaitTimeHelper.__new__(self.updated.WaitTimeHelper)
+    helper.ready_event = threading.Event()
+    helper.request_lock = threading.RLock()
+    helper.request_generation = 0
+    helper.fast_target = None
+    helper.user_request = self.updated.UserRequest.NONE
+    helper.sleep = Mock(side_effect=[None, None, StopIteration])
+    # Keep the real check and loop; replace mounting, service lifetime and unrelated status rendering.
+    with patch.object(self.updated, "Params", return_value=self.updater.params), \
+         patch.object(self.updated, "Updater", return_value=self.updater), \
+         patch.object(self.updated, "WaitTimeHelper", return_value=helper), \
+         patch.object(self.updated, "init_overlay") as init, \
+         patch.object(self.updated, "system_time_valid", return_value=True), \
+         patch.object(self.updater, "set_params") as status, \
+         patch.object(self.updater, "fetch_update") as fetch, \
+         patch.object(self.updated, "phone_uplink_active", return_value=True), \
+         patch.dict(self.updated.run_git.__globals__, {"phone_uplink_active": Mock(return_value=True)}):
+      with self.assertRaises(StopIteration):
+        self.updated.main()
+    self.assertEqual(helper.sleep.call_args_list, [unittest.mock.call(60), unittest.mock.call(5400), unittest.mock.call(5400)])
+    self.assertEqual(init.call_count, 3)
+    self.assertTrue(self.updated.OVERLAY_INIT.exists())
+    self.assertTrue(all(call.args == (False, 0, None) or call.args == (True, 0, None) for call in status.call_args_list))
+    fetch.assert_not_called()
+    self.assertEqual(self.updater.branches[BRANCH], target)
+    self.assertTrue(self.updater.has_internet)
+    self.assertEqual(self.updater.params.values["UpdaterOSUpdate"], {})
+    self.assertFalse(any(command[:2] == ["git", "fetch"] for command in self.commands))
+
+  def test_phone_uplink_activation_during_peek_does_not_fail_check(self):
+    self.prepare_agnos_target()
+    with patch.object(self.updated, "phone_uplink_active", return_value=False), \
+         patch.dict(self.updated.run_git.__globals__, {"phone_uplink_active": Mock(return_value=True)}):
+      self.updater.check_for_update()
+    self.assertTrue(self.updater.has_internet)
+    self.assertEqual(self.updater.params.values["UpdaterOSUpdate"], {})
+    self.assertFalse(any(path.name.startswith("agnos-version-") for path in self.root.iterdir()))
 
   def test_invalid_manifest_rejected_before_checkout(self):
     self.manifest["schema_version"] = 999

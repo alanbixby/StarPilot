@@ -178,7 +178,14 @@ def fast_update(repo, branch, *, params, parked, expected_commit, current_os=Non
   else:
     recent = versions_only or selected_commit is not None
     notify('fetching', f'Fetching {"recent versions" if recent else "latest shallow commit"} on {branch}...')
-    git('fetch', '--progress', f'--depth={RECENT_VERSION_LIMIT if recent else 1}', '--no-tags', '--no-recurse-submodules', 'origin', f'refs/heads/{branch}')
+    # --no-filter alone cannot fill missing blobs if a previous peek already
+    # fetched this commit. Refetch full objects before staging is invalidated.
+    refetch = ('--refetch',) if git('config', '--get', '--default=', 'remote.origin.partialclonefilter').strip() else ()
+    git('fetch', '--progress', '--no-filter', *refetch, f'--depth={RECENT_VERSION_LIMIT if recent else 1}',
+        '--no-tags', '--no-recurse-submodules', 'origin', f'refs/heads/{branch}')
+    if refetch:
+      # Heal once; retain promisor so older missing history stays fetchable.
+      git('config', '--unset', 'remote.origin.partialclonefilter')
     target = git('rev-parse', 'FETCH_HEAD^{commit}').strip()
     if recent:
       members = git('log', '--first-parent', f'-{RECENT_VERSION_LIMIT}', '--format=%H', target, '--').splitlines()
@@ -186,6 +193,12 @@ def fast_update(repo, branch, *, params, parked, expected_commit, current_os=Non
         if selected_commit not in members:
           raise FastUpdateError('Selected version is no longer in recent branch history; refresh and try again')
         target = selected_commit
+        # Deepening a formerly peeked shallow commit can skip its missing blobs.
+        # Fetch that snapshot explicitly while download guards still apply.
+        missing = [row[1:] for row in git('rev-list', '--objects', '--missing=print', f'{target}^{{tree}}').splitlines()
+                   if row.startswith('?')]
+        if missing:
+          git('fetch', '--progress', '--no-filter', '--no-tags', '--no-recurse-submodules', 'origin', *missing)
       else:
         admitted()
         if git('rev-parse', 'HEAD^{commit}').strip() != previous:

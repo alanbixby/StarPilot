@@ -10,6 +10,7 @@ import signal
 import fcntl
 import time
 import threading
+import tempfile
 import atexit
 from pathlib import Path
 
@@ -440,15 +441,24 @@ class Updater:
     if new_commit is None:
       cloudlog.info("target branch %s is not published on origin; no update available", new_branch)
       return
-    if AGNOS:
+    if AGNOS and not phone_uplink_active():
       try:
         if cur_commit != new_commit:
-          run(["git", "fetch", "--depth=1", "--filter=blob:none", "--no-tags", "--no-recurse-submodules", "origin", new_commit], OVERLAY_MERGED)
-        version = required_os_version(run(["git", "show", f"{new_commit}:launch_env.sh"], OVERLAY_MERGED))
+          # A filtered fetch registers a promisor remote and shallow history. Keep
+          # those settings out of the overlay that will become the installed repo.
+          origin = run(["git", "remote", "get-url", "origin"], OVERLAY_MERGED).strip()
+          with tempfile.TemporaryDirectory(prefix="agnos-version-", dir=STAGING_ROOT) as peek:
+            run(["git", "init", "--bare"], peek)
+            run(["git", "remote", "add", "origin", origin], peek)
+            run(["git", "fetch", "--depth=1", "--filter=blob:none", "--no-tags", "--no-recurse-submodules", "origin", new_commit], peek)
+            launch = run(["git", "show", f"{new_commit}:launch_env.sh"], peek)
+        else:
+          launch = run(["git", "show", f"{new_commit}:launch_env.sh"], OVERLAY_MERGED)
+        version = required_os_version(launch)
         current_os = HARDWARE.get_os_version()
         if version and current_os:
           self.params.put("UpdaterOSUpdate", {"branch": new_branch, "required": version != current_os}, block=True)
-      except (OSError, subprocess.SubprocessError):
+      except (OSError, subprocess.SubprocessError, FastUpdateError):
         cloudlog.exception("Unable to check target operating system version")
     if (cur_branch, cur_commit) != (new_branch, new_commit):
       cloudlog.info(f"update available, {cur_branch} ({str(cur_commit)[:7]}) -> {new_branch} ({str(new_commit)[:7]})")
@@ -509,7 +519,7 @@ class Updater:
     admitted()
     self.params.put_bool("UpdateAvailable", True, block=True)
     self.params.put("UpdaterState", "updating...", block=True)
-    progress("rebooting", "Update installed. Restarting device.")
+    progress("complete", "Update installed. Restarting device.")
     self.params.put_bool("DoReboot", True, block=True)
     return "reboot-requested"
 
@@ -535,7 +545,13 @@ class Updater:
     run(["git", "config", "--replace-all", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"], OVERLAY_MERGED)
 
     branch = self.target_branch
-    git_fetch_output = run(["git", "fetch", "--no-recurse-submodules", "origin", branch], OVERLAY_MERGED)
+    # Previously filtered commits can already be known while their blobs are
+    # absent. Force a full pack for those repos before validation or checkout.
+    refetch = ["--refetch"] if run(["git", "config", "--get", "--default=", "remote.origin.partialclonefilter"], OVERLAY_MERGED).strip() else []
+    git_fetch_output = run(["git", "fetch", "--no-filter", *refetch, "--no-recurse-submodules", "origin", branch], OVERLAY_MERGED)
+    if refetch:
+      # Heal once; retain promisor so older missing history stays fetchable.
+      run(["git", "config", "--unset", "remote.origin.partialclonefilter"], OVERLAY_MERGED)
     cloudlog.info("git fetch success: %s", git_fetch_output)
 
     # Validate using the running updater before checking out or executing any update.

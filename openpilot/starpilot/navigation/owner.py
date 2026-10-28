@@ -59,8 +59,8 @@ def destination(value: dict) -> dict:
   name = value.get('name', '')
   latitude, longitude = value.get('latitude'), value.get('longitude')
   if (not isinstance(name, str) or not 1 <= len(name.strip()) <= 256 or
-      (not isinstance(latitude, (int, float)) or isinstance(latitude, bool) or not math.isfinite(latitude) or
-       not isinstance(longitude, (int, float)) or isinstance(longitude, bool) or not math.isfinite(longitude)) or
+      (not isinstance(latitude, (int, float)) or isinstance(latitude, bool) or
+       not isinstance(longitude, (int, float)) or isinstance(longitude, bool)) or
       not -90 <= latitude <= 90 or not -180 <= longitude <= 180):
     raise ValidationError('Destination name and coordinates are invalid')
   identity = hashlib.sha256(f'{latitude:.6f},{longitude:.6f}'.encode()).hexdigest()[:20]

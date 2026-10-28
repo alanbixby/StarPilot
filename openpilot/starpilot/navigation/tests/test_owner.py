@@ -48,6 +48,27 @@ def test_invalid_destination(owner, value):
     owner.select(value, '0', True)
 
 
+@pytest.mark.parametrize('action', ['select', 'favorite'])
+@pytest.mark.parametrize('field', ['latitude', 'longitude'])
+@pytest.mark.parametrize('value', [10 ** 400, -(10 ** 400), True, float('nan'), float('inf'), -float('inf')],
+                         ids=['huge', 'negative-huge', 'bool', 'nan', 'inf', 'negative-inf'])
+def test_invalid_destination_number_preserves_saved_places(owner, action, field, value):
+  selected = owner.select(PLACE, '0', True)
+  owner.favorite(PLACE, selected['revision'], True)
+  before = owner.read()
+  payload = json.loads(json.dumps({**PLACE, field: value}))
+  with pytest.raises(ValidationError, match='^Destination name and coordinates are invalid$'):
+    getattr(owner, action)(payload, before['revision'], True)
+  assert owner.read() == before
+
+
+@pytest.mark.parametrize('latitude,longitude', [(-90, -180), (90, 180), (0, 0), (40., -90.)])
+def test_destination_coordinate_bounds_remain_valid(owner, latitude, longitude):
+  selected = owner.select({**PLACE, 'latitude': latitude, 'longitude': longitude}, '0', True)['destination']
+  assert selected['latitude'] == latitude and selected['longitude'] == longitude
+  assert type(selected['latitude']) is float and type(selected['longitude']) is float
+
+
 def test_current_units_and_stale_revision_not_presented(owner):
   saved = owner.configure({'enabled': True, 'token': 'pk.test'}, '0', True)
   selected = owner.select(PLACE, saved['revision'], True)

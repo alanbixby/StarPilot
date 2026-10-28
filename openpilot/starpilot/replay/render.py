@@ -353,7 +353,9 @@ class Compositor:
     self.monitor = DriverMonitorLayer(self.profile)
     self.view.driver_monitor_layer = self._monitor_layer
     if self.profile == 'compact':
-      self.view.stock_confidence_layer = lambda rect, state: self.camera.render_stock_confidence_layer(rect, lateral_active=state.lateral_active)
+      self.view.stock_confidence_layer = lambda rect, state: self.camera.render_stock_confidence_layer(
+        rect, lateral_active=state.lateral_active, longitudinal_active=state.longitudinal_active,
+        driver_override_active=state.driver_override_active, longitudinal_overridden=state.longitudinal_overridden)
       self.view.stock_confidence_reset = self.camera.reset_stock_confidence_layer
       self.view.extra_overlays = lambda rect, state: self.camera.render_model_source_layer(rect, show_long_indicator=None)
       self.view.compact_sidebar.personality_renderer = self._personality_layer

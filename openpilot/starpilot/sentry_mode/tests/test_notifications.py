@@ -383,3 +383,52 @@ def test_ios_bundle_id_can_subscribe(tmp_path):
     assert snapshot['appSubscriptions'][0]['appId'] == 'link.galaxy.bluetooth.natehuby76'
   finally:
     owner.close()
+
+
+@pytest.mark.parametrize('delete_all', (False, True))
+def test_enqueue_and_delete_during_delivery_preserves_notification_worker(tmp_path, delete_all):
+  clock = [100.]
+  events = []
+  in_flight = threading.Event()
+  complete = threading.Event()
+  failures = []
+  delivered = []
+
+  def transport(_channel, _cfg, _subscription, job, _key, _pem):
+    delivered.append(job['kind'])
+    in_flight.set()
+    assert complete.wait(5), 'The in-flight delivery was not released'
+    return 200
+
+  owner = NotificationOwner(tmp_path / 'notifications', store(events), clock=lambda: clock[0], transport=transport)
+  configure(owner, 'webhook')
+  event_id = 'a' * 32
+  events.append({'eventId': event_id, 'kind': 'warning', 'wallTimeNs': int(101e9)})
+  clock[0] = 101.
+
+  def deliver():
+    try:
+      owner.tick()
+    except Exception as error:
+      failures.append(error)
+
+  worker = threading.Thread(target=deliver, daemon=True)
+  try:
+    worker.start()
+    assert in_flight.wait(5), 'The notification did not reach the transport'
+    # Galaxy remains responsive during delivery: queue a test, then delete the
+    # event whose delivery is in flight through the same public owner actions.
+    owner.action({'action': 'test', 'channel': 'webhook'})
+    owner.delete_events(events.clear, None if delete_all else event_id)
+    complete.set()
+    worker.join(timeout=5)
+    assert not worker.is_alive()
+    assert failures == []
+    assert owner.snapshot()['channels']['webhook']['pending'] == 1
+    owner.tick()
+    assert delivered == ['warning', 'test']
+    assert owner.snapshot()['channels']['webhook']['pending'] == 0
+  finally:
+    complete.set()
+    worker.join(timeout=5)
+    owner.close()

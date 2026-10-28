@@ -107,6 +107,11 @@ def transport_receipt(native, tick, now):
 
 
 class TestTeslaScreenIntegration(unittest.TestCase):
+  def tearDown(self):
+    safety = libsafety_py.libsafety
+    safety.set_alternative_experience(0)
+    safety.set_safety_hooks(structs.CarParams.SafetyModel.noOutput, 0)
+
   def test_screen_gesture_baseline_order_brake_and_cruise_ownership(self):
     self.exercise_screen_runtime(master_off=False)
 

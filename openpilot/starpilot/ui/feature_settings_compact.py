@@ -63,7 +63,7 @@ class FeatureSettingsCompact:
       else:
         detail = value_text(row) if row.key == "LaneCenteringStrength" else (row.value + " " + row.unit).strip()
         if value_reason(row):
-          detail += " · " + value_reason(row)
+          detail += ". " + value_reason(row)
         cards.append(GreyBigButton(row.label.lower(), detail.lower()))
     page._scroller.items.clear()
     page._scroller.add_widgets(cards)
@@ -73,10 +73,10 @@ class FeatureSettingsCompact:
     directions = (1,) if row.repair_value else (-1, 1) if row.step else (1,)
     for direction in directions:
       label = row.label.lower() + (" set " + row.repair_value.lower() if row.repair_value else
-                                   " −" if direction < 0 else " +" if row.step else "")
+                                   " -" if direction < 0 else " +" if row.step else "")
       detail = value_text(row) if row.key == "LaneCenteringStrength" else (row.value + " " + row.unit).strip()
       if value_reason(row):
-        detail += " · " + value_reason(row)
+        detail += ". " + value_reason(row)
       button = BigButton(label, detail)
 
       def clicked(source=row, direction=direction) -> None:

@@ -426,6 +426,8 @@ class Runtime:
       self.ledger = completed.state
     commanded_before = self.commanded_acceptance
     command = self._command(result, sm, now_ns, old_pending, action, adopt)
+    # SET alignment can update override state; publish the completed cycle.
+    result = replace(result, state=self.state)
     message = self._message(now_ns, result, sm, frame)
     if command is not None and (request is not None or commanded_before != self.commanded_acceptance):
       self._command_ui_sequence = request.sequence_id if request is not None else 0

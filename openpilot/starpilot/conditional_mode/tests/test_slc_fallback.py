@@ -166,6 +166,39 @@ class SlcFallbackTests(unittest.TestCase):
     self.assertEqual(evaluate_runtime(runtime, first).reason, Reason.INCONSISTENT_CYCLE)
     self.assertEqual(evaluate_runtime(runtime, later).reason, Reason.QUALIFIED_ABSENCE)
 
+  def test_aligned_set_keeps_current_limit_snapshot_across_frames(self):
+    source = self.sm['slcDashboardObservation']
+    source.status = 'valid'
+    source.speedMps = 100.0 / 3.6
+    source.episode = 1
+    self.sm['carState'].vCruise = self.sm['carState'].vCruiseCluster = 100.0
+
+    for fallback, reason in ((0, Reason.OTHER_FALLBACK), (1, Reason.CURRENT_LIMIT), (2, Reason.OTHER_FALLBACK)):
+      for confirmation in (False, True):
+        with self.subTest(fallback=fallback, confirmation=confirmation):
+          settings = parse({'SpeedLimitController': True, 'SLCFallback': fallback,
+                            'SLCPriority1': 'Dashboard', 'SLCPriority2': 'Dashboard',
+                            'SLCConfirmation': confirmation})
+          runtime = Runtime(settings, session_id='aligned-drive', is_metric=True)
+          previous = None
+          for frame in range(3):
+            now_ns = NOW + frame * 50_000_000
+            self.sm.logMonoTime = dict.fromkeys(self.sm.data, now_ns)
+            source.carStateLogMonoTime = now_ns
+            output = runtime.step(self.sm, self.cp, now_ns=now_ns)
+            self.assertTrue(output.message.slcState.hasAccepted)
+            self.assertFalse(output.message.slcState.hasPending)
+            self.assertEqual(output.message.slcState.commandStatus, 'applied')
+            self.assertIsNone(output.command)
+            evidence = evaluate_runtime(runtime, output)
+            self.assertEqual((evidence.reason, evidence.proposed_experimental), (reason, False))
+            self.assertAlmostEqual(evidence.current_control_target_mps, 100.0 / 3.6, places=5)
+            if previous is not None:
+              self.assertEqual(evaluate_runtime(runtime, previous).reason, Reason.INCONSISTENT_CYCLE)
+            foreign = Runtime(settings, session_id='aligned-drive', is_metric=True)
+            self.assertEqual(evaluate_runtime(foreign, output).reason, Reason.INCONSISTENT_CYCLE)
+            previous = output
+
 
 if __name__ == '__main__':
   unittest.main()

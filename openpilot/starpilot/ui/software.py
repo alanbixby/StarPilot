@@ -5,7 +5,8 @@ import pyray as rl
 from openpilot.starpilot.ui import clip
 
 from openpilot.starpilot.ui.presentation import BitmapFonts, FontRole, Profile
-from openpilot.starpilot.ui.software_state import DownloadLabel, SoftwareRequest, SoftwareState, DIRECT_BUTTONS, button_rect
+from openpilot.starpilot.ui.settings_geometry import elide_text
+from openpilot.starpilot.ui.software_state import CONTENT_RECT, DownloadLabel, SoftwareRequest, SoftwareState, DIRECT_BUTTONS, button_rect
 
 
 TITLES = ("Current Version", "Automatically Install Updates", "Download", "Target Branch", "Uninstall", "Error Log")
@@ -27,15 +28,21 @@ class SoftwareView:
   def _value(self, text: str, row: int, right: float) -> None:
     if not text:
       return
+    left = 570 + self.fonts.measure(TITLES[row], FontRole.NORMAL, 50).width + 48
+    text = elide_text(self.fonts, text, FontRole.NORMAL, 50, right - left)
     measured = self.fonts.measure(text, FontRole.NORMAL, 50)
     top = 50 + row * 171
     self.fonts.draw(text, FontRole.NORMAL, 50, right - measured.width, top + (170 - measured.height) / 2, VALUE_COLOR)
 
-  def _button(self, text: str, row: int, enabled: bool = True) -> None:
-    x, y, width, height = button_rect(row)
+  def _button(self, text: str, rect: tuple[int, int, int, int], enabled: bool = True) -> None:
+    x, y, width, height = rect
     rl.draw_rectangle_rounded(rl.Rectangle(x, y, width, height), 1, 10, BUTTON_COLOR if enabled else BUTTON_DISABLED)
-    measured = self.fonts.measure(text, FontRole.MEDIUM, 35)
-    self.fonts.draw(text, FontRole.MEDIUM, 35, x + (width - measured.width) // 2,
+    size = 35
+    measured = self.fonts.measure(text, FontRole.MEDIUM, size)
+    while measured.width > width and size > 1:
+      size -= 1
+      measured = self.fonts.measure(text, FontRole.MEDIUM, size)
+    self.fonts.draw(text, FontRole.MEDIUM, size, x + (width - measured.width) // 2,
                     y + (height - measured.height) // 2, BUTTON_TEXT_COLOR if enabled else VALUE_COLOR)
 
   @staticmethod
@@ -48,7 +55,7 @@ class SoftwareView:
 
   def render(self, state: SoftwareState) -> None:
     rl.draw_rectangle_rounded(rl.Rectangle(510, 10, 1640, 1060), 0.04, 30, rl.BLACK)
-    clip.begin_scissor_mode(550, 50, 1560, 980)
+    clip.begin_scissor_mode(*CONTENT_RECT)
     try:
       for row, title in enumerate(TITLES):
         top = 50 + row * 171
@@ -59,22 +66,18 @@ class SoftwareView:
         elif row == 1:
           self._toggle(state.automatic_updates, SoftwareRequest.SET_AUTOMATIC_UPDATES in state.available_actions)
         elif row == 2:
-          for request, (x, y, width, height) in DIRECT_BUTTONS:
-            enabled = request in state.available_actions
-            rl.draw_rectangle_rounded(rl.Rectangle(x, y, width, height), 1, 10, BUTTON_COLOR if enabled else BUTTON_DISABLED)
+          for request, rect in DIRECT_BUTTONS:
             text = "FAST" if request == SoftwareRequest.FAST_UPDATE else "PREVIOUS"
-            measured = self.fonts.measure(text, FontRole.MEDIUM, 30)
-            self.fonts.draw(text, FontRole.MEDIUM, 30, x + (width - measured.width) // 2,
-                            y + (height - measured.height) // 2, BUTTON_TEXT_COLOR if enabled else VALUE_COLOR)
+            self._button(text, rect, request in state.available_actions)
           request = SoftwareRequest.DOWNLOAD_UPDATE if state.download_label == DownloadLabel.DOWNLOAD else SoftwareRequest.CHECK_FOR_UPDATES
-          self._button(state.download_label.value, row, request in state.available_actions)
+          self._button(state.download_label.value, button_rect(row), request in state.available_actions)
         elif row == 3:
           self._value(state.target_branch, row, 1840)
-          self._button("SELECT", row, SoftwareRequest.OPEN_BRANCH_CHOOSER in state.available_actions)
+          self._button("SELECT", button_rect(row), SoftwareRequest.OPEN_BRANCH_CHOOSER in state.available_actions)
         elif row == 4:
-          self._button("UNINSTALL", row, SoftwareRequest.OPEN_UNINSTALL_CONFIRMATION in state.available_actions)
+          self._button("UNINSTALL", button_rect(row), SoftwareRequest.OPEN_UNINSTALL_CONFIRMATION in state.available_actions)
         else:
-          self._button("VIEW", row, SoftwareRequest.OPEN_ERROR_LOG in state.available_actions)
+          self._button("VIEW", button_rect(row), SoftwareRequest.OPEN_ERROR_LOG in state.available_actions)
         if row == 2 and state.download_status:
           self.fonts.draw(state.download_status[:100], FontRole.NORMAL, 25, 570, top + 140, VALUE_COLOR)
         if row < len(TITLES) - 1:

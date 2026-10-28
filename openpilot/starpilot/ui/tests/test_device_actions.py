@@ -24,12 +24,30 @@ class TestDeviceActions(unittest.TestCase):
     state = DeviceState()
     for request in DeviceRequest:
       x, y, width, height = button_rect(request)
-      point = x + width / 2, y + min(height / 2, 1030 - y - 1)
+      point = x + width / 2, y + height / 2
       handler.press(*point, state)
       handler.release(*point, state)
       handler.release(*point, state)
       self.assertEqual(actions[-1].request, request)
     self.assertEqual(len(actions), len(DeviceRequest))
+
+  def test_last_button_accepts_its_full_height_and_rejects_points_below_it(self):
+    actions = []
+    handler = DeviceInput(actions.append)
+    state = DeviceState()
+    handler.press(1980, 1035, state)
+    handler.release(1980, 1035, state)
+    self.assertEqual([action.request for action in actions], [DeviceRequest.RESET_CALIBRATION])
+    actions.clear()
+    for bottom in (1040, 1050):
+      handler.press(1980, 1035, state)
+      handler.release(1980, bottom, state)
+      handler.press(1980, bottom, state)
+      handler.release(1980, bottom, state)
+    for disabled in (replace(state, offroad=False), replace(state, available_actions=frozenset())):
+      handler.press(1980, 1035, disabled)
+      handler.release(1980, 1035, disabled)
+    self.assertEqual(actions, [])
 
   def test_disabled_and_cancelled_controls_do_not_emit(self):
     actions = []

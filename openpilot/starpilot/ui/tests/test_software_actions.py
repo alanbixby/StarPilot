@@ -20,7 +20,7 @@ class TestSoftwareActions(unittest.TestCase):
     self.assertFalse(actions[-1].desired_enabled)
     for request, row in BUTTON_ROWS:
       x, y, width, height = button_rect(row)
-      point = x + width / 2, y + min(height / 2, 1030 - y - 1)
+      point = x + width / 2, y + height / 2
       handler.press(*point, state)
       handler.release(*point, state)
       handler.release(*point, state)
@@ -51,7 +51,25 @@ class TestSoftwareActions(unittest.TestCase):
     handler.press(1980, 475, state)
     handler.release(1980, 475, replace(state, download_label=DownloadLabel.DOWNLOAD))
     handler.press(1980, 991, state)
-    handler.release(1980, 1031, state)
+    handler.release(1980, 1040, state)
+    self.assertEqual(actions, [])
+
+  def test_last_button_accepts_its_full_height_and_rejects_points_below_it(self):
+    actions = []
+    handler = SoftwareInput(actions.append)
+    state = SoftwareState()
+    handler.press(1980, 1035, state)
+    handler.release(1980, 1035, state)
+    self.assertEqual([action.request for action in actions], [SoftwareRequest.OPEN_ERROR_LOG])
+    actions.clear()
+    for bottom in (1040, 1050):
+      handler.press(1980, 1035, state)
+      handler.release(1980, bottom, state)
+      handler.press(1980, bottom, state)
+      handler.release(1980, bottom, state)
+    disabled = replace(state, available_actions=frozenset())
+    handler.press(1980, 1035, disabled)
+    handler.release(1980, 1035, disabled)
     self.assertEqual(actions, [])
 
   def test_supplied_state_is_immutable_and_acknowledged_externally(self):

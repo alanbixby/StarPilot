@@ -38,6 +38,8 @@ BUTTON_ROWS = (
   (DeviceRequest.RESET_CALIBRATION, 5),
 )
 
+CONTENT_RECT = (550, 50, 1560, 990)
+
 
 def button_rect(request: DeviceRequest) -> tuple[int, int, int, int]:
   index = dict(BUTTON_ROWS)[request]
@@ -57,7 +59,8 @@ class DeviceInput:
 
   @staticmethod
   def _target(x: float, y: float, state: DeviceState) -> DeviceRequest | None:
-    if not (550 <= x < 2110 and 50 <= y < 1030):
+    left, top, width, height = CONTENT_RECT
+    if not (left <= x < left + width and top <= y < top + height):
       return None
     for request, _ in BUTTON_ROWS:
       rx, ry, width, height = button_rect(request)

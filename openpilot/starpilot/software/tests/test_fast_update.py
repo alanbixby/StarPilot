@@ -1,6 +1,8 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -97,6 +99,196 @@ class TestFastUpdate(unittest.TestCase):
     if branch != 'Dom':
       self.git(self.remote, 'branch', branch)
     return self.target
+
+  def test_filtered_repo_downloads_all_blobs_before_invalidating_staging(self):
+    for target_already_fetched in (False, True):
+      with self.subTest(target_already_fetched=target_already_fetched):
+        self.git(self.repo, 'reset', '--hard', self.previous)
+        self.git(self.remote, 'config', 'uploadpack.allowFilter', 'true')
+        (self.remote / 'openpilot/starpilot/ui/source.py').write_text(f'Filtered target {target_already_fetched}')
+        self.git(self.remote, 'commit', '-am', 'New filtered target')
+        target = self.git(self.remote, 'rev-parse', 'HEAD')
+        if target_already_fetched:
+          self.git(self.repo, 'fetch', '--depth=1', '--filter=blob:none', 'origin', 'Dom')
+          self.assertIn('?', self.git(self.repo, 'rev-list', '--objects', '--missing=print', 'FETCH_HEAD'))
+        else:
+          self.git(self.repo, 'config', 'remote.origin.promisor', 'true')
+          self.git(self.repo, 'config', 'remote.origin.partialclonefilter', 'blob:none')
+        missing_after_fetch = []
+        applied = []
+
+        def traced(command, cwd, target=target, missing_after_fetch=missing_after_fetch, applied=applied):
+          result = owner.run(command, cwd)
+          if 'fetch' in command:
+            self.assertNotIn('--refetch', command)
+            missing_after_fetch.append([row for row in self.git(self.repo, 'rev-list', '--objects', '--missing=print', f'{target}^{{tree}}').splitlines()
+                                        if row.startswith('?')])
+          if 'reset' in command and target in command:
+            applied.append(target)
+          return result
+
+        def offline_after_download(missing_after_fetch=missing_after_fetch):
+          self.invalidations.append(True)
+          self.assertEqual(missing_after_fetch[-1], [])
+          # No validation or apply step may need the origin after fetching.
+          self.git(self.repo, 'remote', 'set-url', 'origin', str(self.repo.parent / 'unavailable'))
+
+        try:
+          self.assertEqual(self.update(run=traced, invalidate=offline_after_download), 'reboot-requested')
+        finally:
+          self.git(self.repo, 'remote', 'set-url', 'origin', str(self.remote))
+        self.assertEqual(len(missing_after_fetch), 2 if target_already_fetched else 1)
+        self.assertEqual(missing_after_fetch[-1], [])
+        self.assertEqual(applied, [target])
+        self.assertEqual(self.git(self.repo, 'rev-parse', 'HEAD'), target)
+        self.assertEqual((self.repo / 'openpilot/starpilot/ui/source.py').read_text(), f'Filtered target {target_already_fetched}')
+
+  def test_filtered_new_and_known_targets_fetch_incrementally(self):
+    (self.remote / 'openpilot/starpilot/ui/stable.bin').write_bytes(os.urandom(256_000))
+    self.git(self.remote, 'add', '.')
+    prebuilt.write_receipt(self.remote)
+    self.git(self.remote, 'add', 'prebuilt.json')
+    self.git(self.remote, 'commit', '-m', 'Large stable UI asset')
+    self.git(self.remote, 'config', 'uploadpack.allowFilter', 'true')
+    counter = self.repo.parent / 'transfer'
+    upload_pack = self.repo.parent / 'upload-pack-counter'
+    upload_pack.write_text('#!/bin/sh\ngit-upload-pack "$@" | tee -a ' + shlex.quote(str(counter)) + '\n')
+    upload_pack.chmod(0o755)
+    self.git(self.repo, 'config', 'remote.origin.uploadpack', str(upload_pack))
+    # Install the stable snapshot once; healing later peeks must not resend it.
+    self.assertEqual(self.update(), 'reboot-requested')
+    stable_cost = counter.stat().st_size
+    self.assertGreater(stable_cost, 256_000)
+    (self.remote / 'openpilot/starpilot/ui/source.py').write_text('Peeked snapshot, never installed')
+    self.git(self.remote, 'commit', '-am', 'Peeked software update')
+    self.git(self.repo, 'fetch', '--depth=1', '--filter=blob:none', 'origin', 'Dom')
+    fetched = []
+    missing = []
+    target = None
+
+    def traced(command, cwd):
+      result = owner.run(command, cwd)
+      if 'fetch' in command:
+        fetched.append(command)
+        missing.append([row for row in self.git(self.repo, 'rev-list', '--objects', '--missing=print', f'{target}^{{tree}}').splitlines()
+                        if row.startswith('?')])
+      return result
+
+    filters = []
+    transferred = []
+    for update in range(2):
+      (self.remote / 'openpilot/starpilot/ui/incremental.py').write_text(f'# Small update {update}\n')
+      self.git(self.remote, 'add', '.')
+      self.git(self.remote, 'commit', '-m', 'Incremental software update')
+      target = self.git(self.remote, 'rev-parse', 'HEAD')
+      # First install a new target with a peeked parent, then a known target.
+      if update == 1:
+        self.git(self.repo, 'fetch', '--depth=1', '--filter=blob:none', 'origin', 'Dom')
+        self.assertIn('?', self.git(self.repo, 'rev-list', '--objects', '--missing=print', f'{target}^{{tree}}'))
+      counter.write_bytes(b'')
+
+      def offline_after_download():
+        self.assertEqual(missing[-1], [])
+        self.git(self.repo, 'remote', 'set-url', 'origin', str(self.repo.parent / 'unavailable'))
+
+      try:
+        self.assertEqual(self.update(run=traced, invalidate=offline_after_download), 'reboot-requested')
+      finally:
+        self.git(self.repo, 'remote', 'set-url', 'origin', str(self.remote))
+      self.assertEqual(self.git(self.repo, 'rev-parse', 'HEAD'), target)
+      filters.append(self.git(self.repo, 'config', '--get', '--default=', 'remote.origin.partialclonefilter'))
+      self.assertEqual(self.git(self.repo, 'config', 'remote.origin.promisor'), 'true')
+      transferred.append(counter.stat().st_size)
+    print(f'fast transfer bytes: stable={stable_cost}, tiny updates={transferred}')
+    self.assertEqual(filters, ['', ''])
+    self.assertFalse(any('--refetch' in command for command in fetched))
+    self.assertEqual(len(fetched), 4)
+    self.assertTrue(missing[0])
+    self.assertTrue(missing[2])
+    self.assertEqual(missing[1::2], [[], []])
+    self.assertTrue(all(size < stable_cost // 10 for size in transferred), (stable_cost, transferred))
+
+  def test_snapshot_fill_obeys_phone_uplink_guard_before_invalidation(self):
+    self.git(self.remote, 'config', 'uploadpack.allowFilter', 'true')
+    self.git(self.repo, 'fetch', '--depth=1', '--filter=blob:none', 'origin', 'Dom')
+    # A previous attempt can have cleared the filter before failing to fill.
+    self.git(self.repo, 'config', '--unset', 'remote.origin.partialclonefilter')
+    blocked = False
+    fetched = []
+
+    def traced(command, cwd):
+      nonlocal blocked
+      if 'fetch' in command:
+        fetched.append(command)
+      result = owner.run(command, cwd)
+      if 'fetch' in command:
+        blocked = True
+      return result
+
+    with patch.object(owner, 'phone_uplink_active', side_effect=lambda: blocked), \
+         patch.object(owner, 'validate_revision') as validate:
+      with self.assertRaisesRegex(owner.FastUpdateError, 'phone uplink'):
+        self.update(run=traced)
+    self.assertEqual(len(fetched), 2)
+    self.assertIn('fetch.negotiationAlgorithm=noop', fetched[-1])
+    validate.assert_not_called()
+    self.assertEqual(self.invalidations, [])
+    self.assertEqual(self.params.calls, [])
+    self.assertEqual(self.git(self.repo, 'rev-parse', 'HEAD'), self.previous)
+    self.assertIn('?', self.git(self.repo, 'rev-list', '--objects', '--missing=print', f'{self.target}^{{tree}}'))
+
+  def test_recent_selection_fills_old_peek_boundary_before_offline_apply(self):
+    ui = self.remote / 'openpilot/starpilot/ui'
+    for name in ('source.py', 'second.py', 'third.py'):
+      (ui / name).write_text(f'Selected snapshot: {name}')
+    self.git(self.remote, 'add', '.')
+    self.git(self.remote, 'commit', '-m', 'Peeked but never installed')
+    selected = self.git(self.remote, 'rev-parse', 'HEAD')
+    self.git(self.remote, 'config', 'uploadpack.allowFilter', 'true')
+    self.git(self.repo, 'fetch', '--depth=1', '--filter=blob:none', 'origin', selected)
+    for name in ('source.py', 'second.py', 'third.py'):
+      (ui / name).write_text(f'Latest snapshot: {name}')
+    self.git(self.remote, 'commit', '-am', 'Newer recent version')
+
+    def missing_snapshot():
+      return [row for row in self.git(self.repo, 'rev-list', '--objects', '--missing=print', f'{selected}^{{tree}}').splitlines()
+              if row.startswith('?')]
+
+    self.assertEqual(len(missing_snapshot()), 3)
+    listing_commands = []
+
+    def list_versions(command, cwd):
+      listing_commands.append(command)
+      return owner.run(command, cwd)
+
+    self.assertEqual(self.update(versions_only=True, run=list_versions), 'versions-listed')
+    self.assertFalse(any('--missing=print' in command for command in listing_commands))
+    self.assertEqual(sum('fetch' in command for command in listing_commands), 1)
+    # Version listing must leave historical snapshot blobs for installation.
+    self.assertEqual(len(missing_snapshot()), 3)
+    snapshots_after_fetch = []
+
+    def traced(command, cwd):
+      result = owner.run(command, cwd)
+      if 'fetch' in command:
+        snapshots_after_fetch.append(missing_snapshot())
+      return result
+
+    def offline_after_download():
+      self.invalidations.append(True)
+      self.git(self.repo, 'remote', 'set-url', 'origin', str(self.repo.parent / 'unavailable'))
+
+    try:
+      self.assertEqual(self.update(selected_commit=selected, run=traced, invalidate=offline_after_download), 'reboot-requested')
+    finally:
+      self.git(self.repo, 'remote', 'set-url', 'origin', str(self.remote))
+    self.assertEqual(snapshots_after_fetch[-1], [])
+    self.assertEqual(missing_snapshot(), [])
+    self.assertEqual(self.git(self.repo, 'rev-parse', 'HEAD'), selected)
+    self.assertEqual(self.git(self.repo, 'config', '--get', '--default=', 'remote.origin.partialclonefilter'), '')
+    self.assertEqual(self.git(self.repo, 'config', 'remote.origin.promisor'), 'true')
+    for name in ('source.py', 'second.py', 'third.py'):
+      self.assertEqual((self.repo / 'openpilot/starpilot/ui' / name).read_text(), f'Selected snapshot: {name}')
 
   def test_legacy_dom_and_starpilot_return_without_manifest_or_build_receipt(self):
     for branch in ('Dom', 'StarPilot'):

@@ -178,7 +178,12 @@ def fast_update(repo, branch, *, params, parked, expected_commit, current_os=Non
   else:
     recent = versions_only or selected_commit is not None
     notify('fetching', f'Fetching {"recent versions" if recent else "latest shallow commit"} on {branch}...')
-    git('fetch', '--progress', f'--depth={RECENT_VERSION_LIMIT if recent else 1}', '--no-tags', '--no-recurse-submodules', 'origin', f'refs/heads/{branch}')
+    filtered = git('config', '--get', '--default=', 'remote.origin.partialclonefilter').strip()
+    git('fetch', '--progress', '--no-filter', f'--depth={RECENT_VERSION_LIMIT if recent else 1}',
+        '--no-tags', '--no-recurse-submodules', 'origin', f'refs/heads/{branch}')
+    if filtered:
+      # Retain promisor so older missing history stays fetchable.
+      git('config', '--unset', 'remote.origin.partialclonefilter')
     target = git('rev-parse', 'FETCH_HEAD^{commit}').strip()
     if recent:
       members = git('log', '--first-parent', f'-{RECENT_VERSION_LIMIT}', '--format=%H', target, '--').splitlines()
@@ -195,6 +200,12 @@ def fast_update(repo, branch, *, params, parked, expected_commit, current_os=Non
         git('update-ref', ref, target)
         notify('complete', 'Recent versions are ready to review.')
         return 'versions-listed'
+    # Previously peeked commits can be known while their snapshot is incomplete.
+    missing = [row[1:] for row in git('rev-list', '--objects', '--missing=print', f'{target}^{{tree}}').splitlines()
+               if row.startswith('?')]
+    if missing:
+      # Advertising incomplete commits as haves can suppress the requested blobs.
+      git('-c', 'fetch.negotiationAlgorithm=noop', 'fetch', '--progress', '--no-filter', '--no-tags', '--no-recurse-submodules', 'origin', *missing)
   notify('validating', 'Checking downloaded operating system and native artifacts...')
   legacy_return = branch in ('Dom', 'StarPilot') and not git('ls-tree', target, '--', 'upstream-sync.json').strip()
   if legacy_return:

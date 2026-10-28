@@ -108,6 +108,11 @@ def axis_status_color(state: OnroadState) -> rl.Color:
   return rl.Color(18, 40, 57, 255)
 
 
+def following_distance_off_rail(state: OnroadState) -> bool:
+  """The stock confidence ball travels the whole compact rail; keep following distance only where it was moved off it."""
+  return placement(state.customization, "compact", "following_distance")["x"] < 536 - 60
+
+
 class JetlinkRenderLayer(Protocol):
   def render(self, state: OnroadState) -> None: ...
 
@@ -356,7 +361,8 @@ class OnroadView:
       if not driver_camera:
         if stock_layer is not None:
           submit("model_confidence", lambda: stock_layer(rl.Rectangle(0, 0, 536, 240), state))
-          submit("following_distance", lambda: self.compact_sidebar.render_personality(rl.Rectangle(0, 0, 536, 240), state))
+          if following_distance_off_rail(state):
+            submit("following_distance", lambda: self.compact_sidebar.render_personality(rl.Rectangle(0, 0, 536, 240), state))
         else:
           for key in RAIL_WIDGETS:
             submit(key, lambda key=key: self.compact_sidebar.render(rl.Rectangle(0, 0, 536, 240), state, widget=key))
@@ -547,7 +553,8 @@ class OnroadView:
       rail = rl.Rectangle(0, 0, 536, 240)
       if use_stock:
         stock_layer(rail, state)
-        self.compact_sidebar.render_personality(rail, state)
+        if following_distance_off_rail(state):
+          self.compact_sidebar.render_personality(rail, state)
       else:
         self.compact_sidebar.render(rail, state)
     clip.begin_scissor_mode(0, 0, 476, 240)

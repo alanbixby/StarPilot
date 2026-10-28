@@ -428,8 +428,9 @@ class NotificationOwner:
       for event in snapshot['events']:
         if 0 <= now - event['wallTimeNs'] / 1e9 <= MAX_AGE:
           self._enqueue(event)
-      for key, job in self.state['jobs'].items():
-        if key not in self.state['jobs']:
+      for key in list(self.state['jobs']):
+        job = self.state['jobs'].get(key)
+        if job is None:
           continue
         if job['state'] not in ('queued', 'sending'):
           continue

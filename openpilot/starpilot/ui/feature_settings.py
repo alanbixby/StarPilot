@@ -10,9 +10,9 @@ from openpilot.starpilot.ui import clip
 from openpilot.starpilot.ui.feature_settings_state import (
   FeatureRow, FeatureSettingsState, FeatureUiAction, FEATURE_CONFIRM_ACTIONS, is_long_confirm_action, boolean_value as _boolean_value,
   FEATURE_ROW_HEIGHT, FEATURE_VISIBLE_ROWS, FEATURE_CONTROL_LEFT, FEATURE_CONTROL_RIGHT,
-  FEATURE_BUTTON_TOP, FEATURE_BUTTON_HEIGHT, FEATURE_ACTION_MARGIN, FEATURE_HEADER_HEIGHT,
+  FEATURE_ACTION_MARGIN, FEATURE_HEADER_HEIGHT,
   FEATURE_TAP_SLOP, FEATURE_FLICK_DISTANCE, FEATURE_PAGE_COUNTER_WIDTH,
-  feature_scroll, feature_action_left, feature_action_rects, feature_row_top, feature_page_counter_left, feature_footer_buttons,
+  feature_scroll, feature_action_left, feature_action_rects, feature_stepper_rects, feature_row_top, feature_page_counter_left, feature_footer_buttons,
   value_buttons, value_editor_rect, value_done_rect, value_text, value_reason,
 )
 from openpilot.starpilot.ui.presentation import BitmapFonts, FontRole, Profile
@@ -24,6 +24,7 @@ from openpilot.starpilot.ui.settings_geometry import (
 
 LABEL_SIZE = 50
 DETAIL_SIZE = 35
+STEPPER_VALUE_MAX_WIDTH = 360
 PAGE_TRANSITION_TIME = 0.18
 EDGE_ACCENT = rl.color_lerp(PANEL_BG, ACCENT, 0.4)
 EDGE_FADE_HEIGHT = 96
@@ -167,6 +168,11 @@ class FeatureSettingsView:
             continue
           has_control = bool(row.actions or row.page or _confirmation(row) or row.available or value is not None)
           width = (feature_action_left(row) - 24 if has_control else 2094) - (left + 55)
+          stepper_rects = (feature_stepper_rects(y) if not heading and row.available and value is None and
+                           not (row.actions or row.page or _confirmation(row) or row.repair_value) else ())
+          value_right = stepper_rects[0][0] - 28 if stepper_rects else 0
+          if stepper_rects:
+            width = min(width, value_right - STEPPER_VALUE_MAX_WIDTH - 24 - (left + 55))
           detail = value_text(row) if row.key == "LaneCenteringStrength" else row.value + (" " + row.unit if row.unit and row.value != "Auto" else "")
           if value is not None or (row.available and not row.actions and not row.page and not _confirmation(row) and not row.repair_value):
             detail = ""
@@ -254,10 +260,13 @@ class FeatureSettingsView:
             else:
               display_value = (value_text(row) if row.key == "LaneCenteringStrength" else
                                row.value + (" " + row.unit if row.unit and row.value != "Auto" else ""))
-              self._center(self._elide(display_value, FontRole.NORMAL, LABEL_SIZE, action.width - 24), LABEL_SIZE,
-                           rl.Rectangle(action.x, y + 12, action.width, FEATURE_BUTTON_TOP - 24), role=FontRole.NORMAL)
-              for x, text in ((1760, "-"), (1940, "+")):
-                button = rl.Rectangle(x, y + FEATURE_BUTTON_TOP, 155, FEATURE_BUTTON_HEIGHT)
+              display_value = self._elide(display_value, FontRole.NORMAL, LABEL_SIZE, STEPPER_VALUE_MAX_WIDTH)
+              value_width = self.fonts.measure(display_value, FontRole.NORMAL, LABEL_SIZE).width
+              value_top, value_bottom = self.fonts.vertical_ink(display_value, FontRole.NORMAL, LABEL_SIZE)
+              self.fonts.draw(display_value, FontRole.NORMAL, LABEL_SIZE, value_right - value_width,
+                              y + (FEATURE_ROW_HEIGHT - value_top - value_bottom) / 2, TEXT_PRIMARY)
+              for text, rect in zip(("-", "+"), stepper_rects, strict=True):
+                button = rl.Rectangle(*rect)
                 active = pressed == FeatureUiAction("change", row, -1 if text == "-" else 1)
                 draw_rounded_fill(button, CONTROL_PRESSED_BG if active else CONTROL_BG)
                 draw_rounded_stroke(button, ACCENT if active else CONTROL_BORDER)

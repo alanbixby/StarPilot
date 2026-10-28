@@ -12,13 +12,16 @@ from opendbc.safety.tests import test_ford_aol
 def owner(request):
   native = test_ford_aol.TestFordAolDriverIntent()
   native.setUp()
-  native.reset(request.param)
-  # Standard matured relay setup, with the same configured AE before and after.
-  native.safety.init_tests()
-  native.safety.set_alternative_experience(32)
-  native.safety.set_aol_test_heartbeat(True)
-  native.arm()
-  return native
+  try:
+    native.reset(request.param)
+    # Standard matured relay setup, with the same configured AE before and after.
+    native.safety.init_tests()
+    native.safety.set_alternative_experience(32)
+    native.safety.set_aol_test_heartbeat(True)
+    native.arm()
+    yield native
+  finally:
+    native.tearDown()
 
 
 def command(owner, *, active, curvature=0., offset_byte=False):

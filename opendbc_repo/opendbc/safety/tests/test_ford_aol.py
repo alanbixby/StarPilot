@@ -110,6 +110,42 @@ class TestFordAolDriverIntent(unittest.TestCase):
     self.safety.aol_set_host_request(1)
     self.assertEqual(self.safety.aol_get_permission_mask(), 1)
 
+  def test_speed_mismatch_revokes_lateral_until_physical_rearm(self):
+    from opendbc.car import gen_empty_fingerprint
+    from opendbc.car.ford.fordcan import CanBus, create_lat_ctl_msg, create_lat_ctl2_msg, create_lka_msg as create_active_lka_msg
+    from opendbc.car.ford.mache_can import create_lka_msg
+
+    bus = CanBus(fingerprint=gen_empty_fingerprint())
+    for word in (8, 12, 13, 18, 32):
+      with self.subTest(word=word):
+        self.reset(word)
+        self.arm()
+        self.pump(5, mask=1, speed=20.)
+        # Extended profiles require the LKA announcement before lateral TX.
+        if word in (18, 32):
+          announcement = create_lka_msg(self.packer, bus)
+          self.assertTrue(self.safety.safety_tx_hook(libsafety_py.make_CANPacket(announcement[0], announcement[2], announcement[1])))
+        if word in (12, 13):
+          frame = create_active_lka_msg(self.packer, bus, active=True, direction=2)
+        elif word == 18:
+          frame = create_lat_ctl2_msg(self.packer, bus, 1, 0., 0., 0., 0., 0)
+        else:
+          frame = create_lat_ctl_msg(self.packer, bus, True, 0., 0., 0., 0.)
+        command = libsafety_py.make_CANPacket(frame[0], frame[2], frame[1])
+        self.assertTrue(self.safety.safety_tx_hook(command))
+        self.assertFalse(self.safety.get_controls_allowed())
+
+        # Valid PCM data disagrees with ABS (20 m/s), without any RX fault.
+        self.rx('EngVehicleSpThrottle2', {'Veh_V_ActlEng': 10. * 3.6, 'VehVActlEng_D_Qf': 3})
+        self.assertEqual([self.safety.safety_tx_hook(command) for _ in range(3)], [False, False, False])
+        self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+        # Neither renewed host requests nor healthy speeds restore the token.
+        self.pump(30, mask=1, speed=20.)
+        self.assertEqual(self.safety.aol_get_permission_mask(), 0)
+        self.assertFalse(self.safety.safety_tx_hook(command))
+        self.rearm()
+        self.assertTrue(self.safety.safety_tx_hook(command))
+
   def test_permanent_eps_then_clean_in_same_batch_revokes(self):
     for word in self.PROFILES:
       with self.subTest(word=word):

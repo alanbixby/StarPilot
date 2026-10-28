@@ -1,11 +1,16 @@
 """Source-supplied alerts with native compact lane-guidance rendering."""
 
+from types import SimpleNamespace
+
 import pyray as rl
 
 from openpilot.common.filter_simple import BounceFilter, FirstOrderFilter
 from openpilot.starpilot.ui.onroad_state import AlertSize, OnroadAlert
 from openpilot.selfdrive.ui.mici.onroad.alert_renderer import Alert as NativeAlert, AlertRenderer as NativeAlertRenderer
 from openpilot.starpilot.ui.presentation import BitmapFonts, FontRole, Profile
+from openpilot.starpilot.ui.settings_geometry import elide_text
+from openpilot.system.ui.lib.application import FONT_SCALE
+from openpilot.system.ui.lib.wrap_text import wrap_text
 
 
 class AlertRenderer:
@@ -16,6 +21,8 @@ class AlertRenderer:
     self._lane_renderer: NativeAlertRenderer | None = None
     self._lane_visible = False
     self._previous: OnroadAlert | None = None
+    self._compact_layout_key: tuple | None = None
+    self._compact_layout: list[tuple[str, FontRole, int, float, float]] = []
     self.text_only_alert_names: frozenset[str] = frozenset()
 
   def _center(self, text: str, role: FontRole, size: int, rect: rl.Rectangle, y: float,
@@ -135,9 +142,6 @@ class AlertRenderer:
     font_size = 82 if len(text) <= 12 else 70 if len(text) <= 16 else 54
     text_x = rect.x + 18
     available_width = rect.width - 36
-    while alert.size != AlertSize.FULL and font_size > 30 and self.fonts.measure(
-        text, FontRole.DISPLAY, font_size, spacing=-0.02 * font_size).width > available_width:
-      font_size -= 2
     spacing = -0.02 * font_size
     if alert.size == AlertSize.FULL:
       # Match word wrapping and line spacing to measured glyph height, not nominal font size.
@@ -158,16 +162,70 @@ class AlertRenderer:
         self.fonts.draw(line, FontRole.DISPLAY, font_size, text_x, y, title_color, spacing=spacing)
         y += self.fonts.measure(line, FontRole.DISPLAY, font_size, spacing=spacing).height * 0.86 * 0.9
       return
-    title_y = animated_y + 12
-    lines = [text]
-    bottom = title_y
+    for line, role, size, y, spacing in self._compact_text_layout(text, subtitle, font_size, available_width, height):
+      self.fonts.draw(line, role, size, text_x, animated_y + y,
+                      title_color if role == FontRole.DISPLAY else subtitle_color, spacing=spacing)
+
+  def _compact_elide(self, text: str, role: FontRole, size: int, width: float, spacing: float) -> str:
+    # The settings helper measures without letter spacing; adapt it to this run's actual spacing.
+    fonts = SimpleNamespace(measure=lambda value, role, size: self.fonts.measure(value, role, size, spacing=spacing))
+    return elide_text(fonts, text, role, size, width)
+
+  def _compact_wrap(self, text: str, role: FontRole, size: int, width: float, spacing: float, *, elide: bool = True) -> list[str]:
+    lines = text.split('\n')
+    if any(self.fonts.measure(line, role, size, spacing=spacing).width > width for line in lines):
+      # Native wrapping applies FONT_SCALE itself; keep the bitmap profile's pixel size in either host mode.
+      lines = wrap_text(self.fonts.font(role), text, size * self.fonts.profile.font_scale / FONT_SCALE, width, spacing)
+    return [self._compact_elide(line, role, size, width, spacing) for line in lines] if elide else lines
+
+  def _compact_text_layout(self, text: str, subtitle: str, preferred_size: int, width: float,
+                           height: float) -> list[tuple[str, FontRole, int, float, float]]:
+    key = (text, subtitle, preferred_size, width, height)
+    if self._compact_layout_key == key:
+      return self._compact_layout
+
+    minimum_size = 30
+    subtitle_height = self.fonts.measure(subtitle.split('\n', 1)[0], FontRole.ROMAN, minimum_size,
+                                         spacing=minimum_size * .025).height if subtitle else 0
+    for font_size in range(preferred_size, minimum_size - 1, -2):
+      spacing = -0.02 * font_size
+      lines = self._compact_wrap(text, FontRole.DISPLAY, font_size, width, spacing, elide=False)
+      if len(lines) > 3:
+        continue
+      measured = [self.fonts.measure(line, FontRole.DISPLAY, font_size, spacing=spacing) for line in lines]
+      title_bottom = 12 + sum(line.height * .86 * .9 for line in measured[:-1]) + measured[-1].height
+      if all(line.width <= width for line in measured) and title_bottom + (subtitle_height - 4 if subtitle else 0) <= height:
+        break
+    else:
+      # Only elide after complete titles fail to fit at every size, including 30.
+      lines = self._compact_wrap(text, FontRole.DISPLAY, font_size, width, spacing)
+      if len(lines) > 2:
+        lines = [lines[0], self._compact_elide(' '.join(lines[1:]), FontRole.DISPLAY, font_size, width, spacing)]
+    layout = []
+    y = bottom = 12.
     for line in lines:
       measured = self.fonts.measure(line, FontRole.DISPLAY, font_size, spacing=spacing)
-      x = text_x
-      self.fonts.draw(line, FontRole.DISPLAY, font_size, x, title_y, title_color, spacing=spacing)
-      bottom = title_y + measured.height
-      title_y += measured.height * .86 * .9
+      layout.append((line, FontRole.DISPLAY, font_size, y, spacing))
+      bottom = y + measured.height
+      y += measured.height * .86 * .9
+
     if subtitle:
       subtitle_y = bottom - 4
-      self.fonts.draw(subtitle, FontRole.ROMAN, 36, text_x, subtitle_y,
-                      subtitle_color, spacing=36 * 0.025)
+      for subtitle_size in range(36, minimum_size - 1, -2):
+        subtitle_spacing = subtitle_size * .025
+        lines = self._compact_wrap(subtitle, FontRole.ROMAN, subtitle_size, width, subtitle_spacing)
+        line_height = self.fonts.measure(lines[0], FontRole.ROMAN, subtitle_size, spacing=subtitle_spacing).height
+        line_step = line_height * .86 * .9
+        if subtitle_y + line_step * (len(lines) - 1) + line_height <= height:
+          break
+      for index, line in enumerate(lines):
+        y = subtitle_y + index * line_step
+        if y + line_height > height:
+          break
+        if index + 1 < len(lines) and y + line_step + line_height > height:
+          line = self._compact_elide(' '.join(lines[index:]), FontRole.ROMAN, subtitle_size, width, subtitle_spacing)
+        layout.append((line, FontRole.ROMAN, subtitle_size, y, subtitle_spacing))
+
+    self._compact_layout_key = key
+    self._compact_layout = layout
+    return layout

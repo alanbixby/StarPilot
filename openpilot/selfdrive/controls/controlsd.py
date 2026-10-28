@@ -232,7 +232,6 @@ class Controls:
     lateral_requested = self.sm['selfdriveState'].enabled and self.sm['selfdriveState'].active
     CC.latActive = ordinary_lateral_requested(self.sm['selfdriveState'].active, CS, self.CP)
     CC.longActive = CC.enabled and not any(e.overrideLongitudinal for e in self.sm['onroadEvents']) and self.CP.openpilotLongitudinalControl
-    CC.longActive = self.longitudinal_inputs.qualify_active(CC.longActive)
     if self.aol_replay:
       now_ns = int(self.sm.logMonoTime['carState']) if os.getenv('REPLAY') == '1' else time.monotonic_ns()
       if late_gm_refresh:
@@ -280,6 +279,9 @@ class Controls:
       # LAT-only refresh cannot enable ordinary LONG; its next normal cycle owns that transition.
       CC.latActive = bool(CC.latActive and CS.canValid and not CS.canTimeout)
       CC.longActive = False
+
+    # Qualify the final axis request using any inputs received by the late refresh.
+    CC.longActive = self.longitudinal_inputs.qualify_active(CC.longActive)
 
     fault_latch = getattr(self, 'hyundai_lateral_fault', None)
     if fault_latch is not None:

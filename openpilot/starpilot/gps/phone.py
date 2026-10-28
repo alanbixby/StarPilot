@@ -12,9 +12,12 @@ def _number(payload, key, required=False):
   value = payload.get(key)
   if value is None and not required:
     return math.nan
-  if type(value) not in (int, float) or not math.isfinite(value):
-    raise ValueError(f"Invalid {key}")
-  return float(value)
+  try:
+    if type(value) not in (int, float) or not math.isfinite(value):
+      raise ValueError(f"Invalid {key}")
+    return float(value)
+  except OverflowError:
+    raise ValueError(f"Invalid {key}") from None
 
 
 def _optional(payload, key, low, high):

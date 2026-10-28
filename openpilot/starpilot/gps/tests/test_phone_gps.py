@@ -1,3 +1,4 @@
+import json
 import math
 import tempfile
 from pathlib import Path
@@ -318,3 +319,23 @@ def test_invalid_upload_reports_reason_without_erasing_last_fix(tmp_path):
     publisher.publish({**FIX, 'ageMs': 5000})
   status = phone_gps_status(NOW, path)
   assert status['reason'] == 'Location is too old' and status['usable']
+
+
+@pytest.mark.parametrize('field', ('latitude', 'longitude', 'horizontalAccuracy', 'ageMs', 'altitude', 'speed',
+                                 'bearing', 'verticalAccuracy', 'speedAccuracy', 'bearingAccuracy'))
+@pytest.mark.parametrize('value', [10 ** 400, -(10 ** 400), True, math.nan, math.inf, -math.inf],
+                         ids=['huge', 'negative-huge', 'bool', 'nan', 'inf', 'negative-inf'])
+def test_invalid_numeric_upload_reports_rejection_and_preserves_usable_fix(tmp_path, field, value):
+  path = tmp_path / 'gps.json'
+  now = [NOW]
+  publisher = PhoneGpsPublisher(path, lambda: now[0])
+  publisher.publish(FIX)
+  previous = path.read_bytes()
+  now[0] += 1_000_000_000
+  payload = json.loads(json.dumps({**FIX, field: value}))
+  with pytest.raises(ValueError, match=f'^Invalid {field}$'):
+    publisher.publish(payload)
+  assert path.read_bytes() == previous
+  assert phone_gps_status(now[0], path) == {
+    'reason': f'Invalid {field}', 'accepted': False, 'usable': True, 'receivedAgeMs': 0., 'fixAgeMs': 1300.,
+  }

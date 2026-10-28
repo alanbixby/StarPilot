@@ -297,10 +297,13 @@ class LongitudinalPlanner:
     )
     self.last_curve_ceiling_status = curve.status
     self.last_curve_ceiling_applied = False
+    curve_owns_cruise = curve.effective_mps is not None
     if curve.effective_mps is not None:
       v_cruise = curve.effective_mps
     navigation_target = navigation_ceiling(sm, self.CP, sample_now_ns, v_cruise) if profile_eligible else None
     if navigation_target is not None:
+      if navigation_target <= v_cruise:
+        curve_owns_cruise = False
       v_cruise = min(v_cruise, navigation_target)
     coast_plan = None
     if wheel_coast is not None:
@@ -312,8 +315,11 @@ class LongitudinalPlanner:
         lead_relevant=bool(pulse_lead), stop_context=bool(sm['carState'].standstill or sm['controlsState'].forceDecel or
         self.force_stop_plan.forcing or sm['modelV2'].action.shouldStop or not self.allow_throttle))
       if coast_plan.speed_ceiling_mps is not None:
+        if coast_plan.speed_ceiling_mps <= v_cruise:
+          curve_owns_cruise = False
         v_cruise = min(v_cruise, coast_plan.speed_ceiling_mps)
     if sm['controlsState'].forceDecel or coast_plan is not None and coast_plan.force_decel:
+      curve_owns_cruise = False
       v_cruise = 0.0
 
     self.v_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.v_solution)
@@ -423,8 +429,8 @@ class LongitudinalPlanner:
     mpc_source = self.mpc.source
     output_a_target, self.mpc.source, _ = min(candidates, key=lambda c: c[0])
     # A curve candidate alone cannot own driver feedback. Lead/e2e braking and
-    # an equal or lower SLC ceiling retain their own attribution.
-    self.last_curve_ceiling_applied = (curve.effective_mps is not None and self.a_cruise < output_a_target_mpc and
+    # equal or lower cruise caps retain their own attribution.
+    self.last_curve_ceiling_applied = (curve_owns_cruise and self.a_cruise < output_a_target_mpc and
                                       (not sm['selfdriveState'].experimentalMode or self.a_cruise < output_a_target_e2e))
     self.output_should_stop = self.force_stop_plan.should_stop or any(should_stop for _, _, should_stop in candidates)
     if conditional_handoff is None:

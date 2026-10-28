@@ -3,6 +3,7 @@
 import unittest
 from collections import deque
 from types import SimpleNamespace as NS
+from unittest.mock import patch
 
 from openpilot.cereal import messaging
 from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
@@ -10,6 +11,7 @@ from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPl
 from openpilot.selfdrive.controls.plannerd import (
   confirm_curve_frame, curve_for_frame, current_cruise_event, queue_cruise_event, update_curve_frame,
 )
+from openpilot.starpilot.controllers.coast import CoastPlan
 from openpilot.starpilot.curve_speed.host import CurveHost
 from openpilot.starpilot.longitudinal.cruise_ceiling import CruiseCeiling, CurveCeiling
 from openpilot.starpilot.longitudinal.profile_runtime import ProfileTuning
@@ -31,7 +33,7 @@ class Bus:
     return self.messages[name]
 
 
-def bus(stamp, *, lead_present=False, lead_distance=30.0):
+def bus(stamp, *, lead_present=False, lead_distance=30.0, brake_pressed=False):
   names = ('modelV2', 'carState', 'carControl', 'controlsState', 'selfdriveState', 'radarState', 'vehicleParameters')
   events = {name: messaging.new_message(name) for name in names}
   events['modelV2'].modelV2.orientationRate.z = [0.25] * 33
@@ -41,6 +43,7 @@ def bus(stamp, *, lead_present=False, lead_distance=30.0):
   events['carState'].carState.vCruise = 108.0
   events['carState'].carState.vEgo = 25.0
   events['carState'].carState.canValid = True
+  events['carState'].carState.brakePressed = brake_pressed
   events['carControl'].carControl.longActive = True
   events['carControl'].carControl.orientationNED = [0.0, 0.0, 0.0]
   events['selfdriveState'].selfdriveState.enabled = True
@@ -160,6 +163,69 @@ class CurveLoopTests(unittest.TestCase):
       self.assertFalse(planner.last_curve_ceiling_applied)
       self.assertFalse(host.runtime.was_controlling)
     self.assertEqual(host.runtime.curve.revision, 0)
+
+  def test_actual_native_navigation_braking_cannot_train_curve(self):
+    cp = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+    cp.pcmCruise = False
+    host = CurveHost(enabled=True, replay=True)
+    planner = LongitudinalPlanner(cp, init_v=25.0)
+    without_curve = LongitudinalPlanner(cp, init_v=25.0)
+    applied = []
+    with patch('openpilot.selfdrive.controls.lib.longitudinal_planner.navigation_ceiling', return_value=10.0):
+      for n in range(1, 31):
+        stamp = NOW + n * 50_000_000
+        sm = bus(stamp)
+        result = update_curve_frame(planner, sm, cp, stamp, host=host)
+        without_curve.update(sm, now_ns=stamp)
+        self.assertAlmostEqual(planner.output_a_target, without_curve.output_a_target)
+        applied.append(planner.last_curve_ceiling_applied)
+      self.assertIsNotNone(result.ceiling_mps)
+      self.assertGreater(result.ceiling_mps, 10.0)
+      self.assertAlmostEqual(planner.output_a_target, -0.5)
+      stamp += 50_000_000
+      update_curve_frame(planner, bus(stamp, brake_pressed=True), cp, stamp, host=host)
+    self.assertEqual(host.runtime.curve.revision, 0, 'navigation braking must not arm Curve brake feedback')
+    self.assertFalse(any(applied))
+    self.assertFalse(host.runtime.was_controlling)
+
+  def test_actual_native_navigation_equal_cap_denies_feedback_but_higher_cap_preserves_it(self):
+    # Probe planner arbitration at the qualified-provider boundary. The current
+    # navigation provider itself only emits caps below the supplied target.
+    for offset, expected_owner in ((0.0, False), (2.0, True), (None, True)):
+      with self.subTest(navigation_offset=offset):
+        cp = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+        cp.pcmCruise = False
+        host = CurveHost(enabled=True, replay=True)
+        planner = LongitudinalPlanner(cp, init_v=25.0)
+        def navigation(_sm, _cp, _now, target, *, _offset=offset):
+          return target + _offset if _offset is not None else None
+        with patch('openpilot.selfdrive.controls.lib.longitudinal_planner.navigation_ceiling', side_effect=navigation):
+          for n in range(1, 31):
+            stamp = NOW + n * 50_000_000
+            result = update_curve_frame(planner, bus(stamp), cp, stamp, host=host)
+          self.assertIsNotNone(result.ceiling_mps)
+          self.assertEqual(planner.last_curve_ceiling_applied, expected_owner)
+          self.assertEqual(host.runtime.was_controlling, expected_owner)
+          stamp += 50_000_000
+          update_curve_frame(planner, bus(stamp, brake_pressed=True), cp, stamp, host=host)
+        self.assertEqual(host.runtime.curve.revision, int(expected_owner))
+
+  def test_actual_native_wheel_coast_arbitration_preserves_only_curve_owned_feedback(self):
+    for offset, force, expected_owner in ((-2.0, False, False), (0.0, False, False), (2.0, False, True),
+                                          (None, False, True), (None, True, False)):
+      with self.subTest(coast_offset=offset, force_decel=force):
+        cp = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)
+        cp.pcmCruise = False
+        host = CurveHost(enabled=True, replay=True)
+        planner = LongitudinalPlanner(cp, init_v=25.0)
+        def coast(_params, _cp, _sm, *, target_mps, _offset=offset, _force=force, **_kwargs):
+          return CoastPlan(force_decel=_force, speed_ceiling_mps=target_mps + _offset if _offset is not None else None)
+        for n in range(1, 31):
+          stamp = NOW + n * 50_000_000
+          result = update_curve_frame(planner, bus(stamp), cp, stamp, host=host, wheel_coast=(NS(sample=coast), None))
+        self.assertIsNotNone(result.ceiling_mps)
+        self.assertEqual(planner.last_curve_ceiling_applied, expected_owner)
+        self.assertEqual(host.runtime.was_controlling, expected_owner)
 
   def test_same_cycle_mpc_headway_filters_following_lead(self):
     cp = CarInterface.get_non_essential_params(CAR.HONDA_CIVIC)

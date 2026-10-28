@@ -50,6 +50,9 @@ echo -n "$GIT_COMMIT_DATE" > git_src_commit_date
 echo "[-] committing version $VERSION T=$SECONDS"
 # writing larger objects is faster than compressing them on-device
 git -c core.compression=0 add -f .
+# Filtering and source provenance change the copied protected inventory.
+python3 openpilot/common/prebuilt_manifest.py "$TARGET_DIR"
+git -c core.compression=0 add -f prebuilt.json
 git status
 git -c core.compression=0 commit -a -m "openpilot v$VERSION release
 
@@ -62,6 +65,8 @@ python3 tools/vendor/check.py --revision HEAD
 python3 tools/resources/check.py --revision HEAD
 
 source "$SOURCE_DIR/tools/release/check_file_sizes.sh"
+
+python3 tools/ci/check_prebuilt_receipt.py --repo "$TARGET_DIR" --revision HEAD
 
 if [ ! -z "$BRANCH" ]; then
   echo "[-] Pushing to $BRANCH T=$SECONDS"

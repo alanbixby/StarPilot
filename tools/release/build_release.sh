@@ -82,6 +82,9 @@ VERSION=$(cat openpilot/common/version.h | awk -F[\"-]  '{print $2}')
 # writing larger objects is faster than compressing them on-device
 git -c core.compression=0 add -f .
 python3 tools/vendor/check.py
+# Cleanup changes the protected inventory; receipt tools must live outside tools/release/.
+python3 openpilot/common/prebuilt_manifest.py "$BUILD_DIR"
+git -c core.compression=0 add -f prebuilt.json
 git -c core.compression=0 -c gc.auto=0 commit -m "openpilot v$VERSION"
 source "$SOURCE_DIR/tools/release/check_file_sizes.sh"
 
@@ -89,6 +92,8 @@ source "$SOURCE_DIR/tools/release/check_file_sizes.sh"
 cd "$BUILD_DIR"
 RELEASE=1 ./openpilot/selfdrive/test/test_onroad.py "$@"
 #tools/test_runner.py openpilot/selfdrive/car/tests/test_car_interfaces.py
+
+python3 tools/ci/check_prebuilt_receipt.py --repo "$BUILD_DIR" --revision HEAD
 
 echo "[-] pushing release T=$SECONDS"
 REFS=()

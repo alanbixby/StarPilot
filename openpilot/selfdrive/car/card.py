@@ -676,7 +676,7 @@ class Car:
           restricted=(getattr(self.aol_transport_feedback, 'ordinary_warning_qualified', False) or
             restrict(self.CP, CS) or
             ((angle_aol or mazda_aol or preap_aol or rivian_aol) and self.aol_card_intent.pause_lateral) or
-            (angle_aol and CS.brakePressed and (not CS.standstill) and (CS.vEgo < self.aol_settings.pause_brake_mps)) or
+            (angle_aol and CS.brakePressed and (not CS.standstill) and (CS.vEgo < self.aol_card_intent.settings.pause_brake_mps)) or
             (volkswagen_aol and (self.aol_card_intent.pause_lateral or
             (CS.brakePressed and (not CS.standstill) and (CS.vEgo < self.aol_card_intent.settings.pause_brake_mps))))),
           now_ns=now_ns,

@@ -5,6 +5,7 @@ Neither ordinary controls_allowed nor an active steering command is seeded.
 """
 
 import pytest
+import time
 from contextlib import ExitStack
 from unittest.mock import patch
 from opendbc.car.gm.values import DBC
@@ -82,6 +83,30 @@ def exercise_f1(main_action=0, gesture='none'):
   with OpenpilotPrefix(), ExitStack() as cleanup:
     cleanup.callback(case.doCleanups)
     sd, controls, step = case._authority_callers(False, cp=cp, genuine_events=True)
+    # This lifecycle bench has no radar process. Publish fresh no-lead evidence
+    # so SET/RES exercises the real GM CC qualification as well as axis authority.
+    receive_controls = controls.sm.update_msgs
+    next_plan_ns = 0
+
+    def feed_controls(timestamp, messages):
+      nonlocal next_plan_ns
+      now = round(timestamp * 1e9)
+      # The generic two-tick fixture feeds the plan at 100 Hz. This longer
+      # lifecycle uses the real frequency checks, so retain its 20 Hz cadence.
+      if now >= next_plan_ns:
+        next_plan_ns = now + 50_000_000
+        radar = messaging.new_message('radarState', valid=True, logMonoTime=now)
+        messages = [*messages, radar.as_reader()]
+      else:
+        messages = [message for message in messages if message.which() != 'longitudinalPlan']
+      receive_controls(timestamp, messages)
+
+    def clock_pair():
+      now = time.monotonic_ns()
+      return now, now
+
+    cleanup.enter_context(patch.object(controls.sm, 'update_msgs', side_effect=feed_controls))
+    cleanup.enter_context(patch('openpilot.starpilot.longitudinal.inputs.clock_pair_ns', side_effect=clock_pair))
     sd.params.put('MainCruiseButtonControl', main_action, block=True)
     sd.aol_settings = read_settings(sd.params)
     # The initial real Controls result is disabled because no authority wire exists.

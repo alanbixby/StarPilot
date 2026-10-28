@@ -25,7 +25,7 @@ def configuration(profile):
 @pytest.mark.parametrize('profile', ['ascm-stock', 'ascm-long', 'sdgm-stock', 'sdgm-long', 'bolt-cc-pedal', 'bolt-acc-pedal'])
 @pytest.mark.parametrize('arrival', ['healthy', 'empty', 'temporary_fault', 'withdrawn', 'native_invalid',
                                     'native_expired', 'can_invalid', 'longitudinal'])
-def test_gm_axis_expiry_during_qualification_uses_only_fresh_queued_permission(profile, arrival):
+def test_gm_axis_expiry_during_preparation_uses_only_fresh_queued_permission(profile, arrival):
   cp = configuration(profile)
   case = fixture.IoniqAvailabilityTests(methodName='runTest')
   with ExitStack() as cleanup:
@@ -55,10 +55,12 @@ def test_gm_axis_expiry_during_qualification_uses_only_fresh_queued_permission(p
         axis.longitudinalActive = axis.desiredLongitudinal = arrival == 'longitudinal'
       queued.append(event.as_reader())
 
-    def qualify(active):
+    update_params = controls.VM.update_params
+
+    def prepare(*args):
+      update_params(*args)
       # Route6a: proof is fresh on entry, expired by the axis-selection gate.
       clock[0] = fresh
-      return active
 
     def receive(_timeout):
       if arrival != 'empty':
@@ -68,7 +70,7 @@ def test_gm_axis_expiry_during_qualification_uses_only_fresh_queued_permission(p
 
     cleanup.enter_context(patch.dict('os.environ', {'REPLAY': '0'}))
     cleanup.enter_context(patch('time.monotonic_ns', side_effect=lambda: clock[0]))
-    cleanup.enter_context(patch.object(controls.longitudinal_inputs, 'qualify_active', side_effect=qualify))
+    cleanup.enter_context(patch.object(controls.VM, 'update_params', side_effect=prepare))
     receive_mock = cleanup.enter_context(patch.object(controls.sm, 'update', side_effect=receive))
     command, _ = controls.state_control()
     receive_mock.assert_called_once_with(0)
@@ -93,13 +95,15 @@ def test_expired_combined_gm_permission_still_withdraws_both_axes_without_refres
     deadline = controls.sm['aolAxisState'].validUntilMonoTime
     clock = [deadline - 10_000_000]
 
-    def qualify(active):
+    update_params = controls.VM.update_params
+
+    def prepare(*args):
+      update_params(*args)
       clock[0] = deadline + 10_000_000
-      return active
 
     cleanup.enter_context(patch.dict('os.environ', {'REPLAY': '0'}))
     cleanup.enter_context(patch('time.monotonic_ns', side_effect=lambda: clock[0]))
-    cleanup.enter_context(patch.object(controls.longitudinal_inputs, 'qualify_active', side_effect=qualify))
+    cleanup.enter_context(patch.object(controls.VM, 'update_params', side_effect=prepare))
     receive = cleanup.enter_context(patch.object(controls.sm, 'update'))
     command, _ = controls.state_control()
     receive.assert_not_called()

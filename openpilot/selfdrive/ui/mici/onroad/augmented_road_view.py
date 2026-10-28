@@ -268,8 +268,12 @@ class AugmentedRoadView(CameraView):
       self._long_indicator.set_should_draw(show_long_indicator)
       self._long_indicator.render(rect)
 
-  def render_stock_confidence_layer(self, rect: rl.Rectangle, *, lateral_active: bool = False) -> None:
-    self._confidence_ball.render_with_lateral(rect, lateral_active)
+  def render_stock_confidence_layer(self, rect: rl.Rectangle, *, lateral_active: bool = False,
+                                    longitudinal_active: bool | None = None, driver_override_active: bool = False,
+                                    longitudinal_overridden: bool = False) -> None:
+    self._confidence_ball.render_with_lateral(rect, lateral_active, longitudinal_active=longitudinal_active,
+                                               driver_override_active=driver_override_active,
+                                               longitudinal_overridden=longitudinal_overridden)
 
   def reset_stock_confidence_layer(self) -> None:
     self._confidence_ball.reset()

@@ -347,10 +347,8 @@ class AppearanceSettingsTests(unittest.TestCase):
     from openpilot.selfdrive.ui.ui_state import UIStatus
     from openpilot.starpilot.ui.runtime_app import render_stock_confidence
 
-    ball = native_ball.ConfidenceBall.__new__(native_ball.ConfidenceBall)
-    ball._demo = False
+    ball = native_ball.ConfidenceBall()
     ball._confidence_filter = FirstOrderFilter(-0.5, 0.5, 1 / 20)
-    ball._render_lateral_active = False
     rect = rl.Rectangle(0, 0, 536, 240)
     ball._rect = rect
     model = NS(meta=NS(disengagePredictions=NS(brakeDisengageProbs=[0.1], steerOverrideProbs=[0.1])))
@@ -366,15 +364,17 @@ class AppearanceSettingsTests(unittest.TestCase):
       self.assertEqual(colors[-1][0].r, 50)
       self.assertFalse(ball._render_lateral_active)
       camera = Mock()
-      camera.render_stock_confidence_layer.side_effect = lambda _rect, *, lateral_active: ball.render_with_lateral(_rect, lateral_active)
+      camera.render_stock_confidence_layer.side_effect = lambda _rect, *, lateral_active, **kwargs: ball.render_with_lateral(
+        _rect, lateral_active, **kwargs)
       state = OnroadState(engaged=True, camera_available=True, speed_mps=12, cruise_kph=60,
                           speed_limit=SpeedLimitObservation(), lateral_active=True,
                           stock_confidence_source_fresh=True, stock_confidence_source_stamp_ns=1,
                           stock_confidence_drive_frame=1)
       render_stock_confidence(camera, rect, state)
-      camera.render_stock_confidence_layer.assert_called_once_with(rect, lateral_active=True)
+      camera.render_stock_confidence_layer.assert_called_once_with(rect, lateral_active=True, longitudinal_active=False,
+                                                                   driver_override_active=False, longitudinal_overridden=False)
       self.assertGreater(ball._confidence_filter.x, -0.5)
-      self.assertEqual(colors[-1][0].r, 255)
+      self.assertEqual((colors[-1][0].r, colors[-1][0].g, colors[-1][0].b), (10, 186, 181))
       self.assertFalse(ball._render_lateral_active)
       native_state.status = UIStatus.OVERRIDE
       ball.render_with_lateral(rect, True)
@@ -382,12 +382,16 @@ class AppearanceSettingsTests(unittest.TestCase):
       self.assertFalse(ball._render_lateral_active)
     with patch.object(ball, "render", side_effect=RuntimeError("render failed")):
       with self.assertRaises(RuntimeError):
-        ball.render_with_lateral(rect, True)
+        ball.render_with_lateral(rect, True, longitudinal_active=True, driver_override_active=True)
       self.assertFalse(ball._render_lateral_active)
+      self.assertIsNone(ball._render_longitudinal_active)
+      self.assertFalse(ball._render_override_active)
     native_view = Mock()
     native_view._confidence_ball = Mock()
-    AugmentedRoadView.render_stock_confidence_layer(native_view, rect, lateral_active=True)
-    native_view._confidence_ball.render_with_lateral.assert_called_once_with(rect, True)
+    AugmentedRoadView.render_stock_confidence_layer(native_view, rect, lateral_active=True, longitudinal_active=False,
+                                                   driver_override_active=True, longitudinal_overridden=True)
+    native_view._confidence_ball.render_with_lateral.assert_called_once_with(
+      rect, True, longitudinal_active=False, driver_override_active=True, longitudinal_overridden=True)
 
   def test_edit_repair_and_stale_source_guards(self):
     request = row_change(self.row("HidePersonalityAlerts"))

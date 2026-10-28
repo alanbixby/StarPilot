@@ -7,6 +7,11 @@ from openpilot.system.ui.lib.application import gui_app
 from openpilot.common.filter_simple import FirstOrderFilter
 
 
+# Match StarPilot's axis_status_color without importing the onroad view here.
+LAT_ONLY_COLOR = rl.Color(10, 186, 181, 255)
+LONG_ONLY_COLOR = rl.Color(255, 105, 180, 255)
+
+
 def draw_circle_gradient(center_x: float, center_y: float, radius: int,
                          top: rl.Color, bottom: rl.Color) -> None:
   # Draw a square with the gradient
@@ -27,6 +32,8 @@ class ConfidenceBall(Widget):
     self._demo = demo
     self._confidence_filter = FirstOrderFilter(-0.5, 0.5, 1 / gui_app.target_fps)
     self._render_lateral_active = False
+    self._render_longitudinal_active: bool | None = None
+    self._render_override_active = False
 
   def update_filter(self, value: float):
     self._confidence_filter.update(value)
@@ -34,23 +41,41 @@ class ConfidenceBall(Widget):
   def reset(self) -> None:
     self._confidence_filter.x = -0.5
 
-  def render_with_lateral(self, rect: rl.Rectangle, lateral_active: bool) -> bool | int | None:
+  def render_with_lateral(self, rect: rl.Rectangle, lateral_active: bool, *, longitudinal_active: bool | None = None,
+                          driver_override_active: bool = False, longitudinal_overridden: bool = False) -> bool | int | None:
     self._render_lateral_active = lateral_active
+    self._render_longitudinal_active = longitudinal_active
+    self._render_override_active = driver_override_active or longitudinal_overridden
     try:
       return self.render(rect)
     finally:
       self._render_lateral_active = False
+      self._render_longitudinal_active = None
+      self._render_override_active = False
+
+  def _active_axes(self) -> tuple[bool, bool]:
+    if self._render_longitudinal_active is None:
+      # Native/legacy callers have only UIStatus, plus an optional AOL flag.
+      active = ui_state.status != UIStatus.DISENGAGED
+      return self._render_lateral_active or active, active
+    return self._render_lateral_active, self._render_longitudinal_active
 
   def _update_state(self):
     if self._demo:
       return
 
-    # animate status dot in from bottom
-    if ui_state.status == UIStatus.DISENGAGED and not self._render_lateral_active:
+    lateral_active, longitudinal_active = self._active_axes()
+    # Animate status dot in from bottom, using only the active axes' predictions.
+    if not lateral_active and not longitudinal_active:
       self._confidence_filter.update(-0.5)
     else:
-      self._confidence_filter.update((1 - max(ui_state.sm['modelV2'].meta.disengagePredictions.brakeDisengageProbs or [1])) *
-                                                        (1 - max(ui_state.sm['modelV2'].meta.disengagePredictions.steerOverrideProbs or [1])))
+      predictions = ui_state.sm['modelV2'].meta.disengagePredictions
+      confidence = 1.0
+      if lateral_active:
+        confidence *= 1 - max(predictions.steerOverrideProbs or [1])
+      if longitudinal_active:
+        confidence *= 1 - max(predictions.brakeDisengageProbs or [1])
+      self._confidence_filter.update(confidence)
 
   def _render(self, _):
     content_rect = rl.Rectangle(
@@ -64,9 +89,14 @@ class ConfidenceBall(Widget):
     dot_height = (1 - self._confidence_filter.x) * (content_rect.height - 2 * status_dot_radius) + status_dot_radius
     dot_height = self._rect.y + dot_height
 
-    # confidence zones
-    if ui_state.status == UIStatus.ENGAGED or self._demo or \
-       (ui_state.status == UIStatus.DISENGAGED and self._render_lateral_active):
+    lateral_active, longitudinal_active = self._active_axes()
+    # Driver override takes precedence over either axis' engaged color.
+    legacy_override = self._render_longitudinal_active is None and ui_state.status == UIStatus.OVERRIDE
+    if not self._demo and (self._render_override_active or legacy_override):
+      top_dot_color = rl.Color(255, 255, 255, 255)
+      bottom_dot_color = rl.Color(82, 82, 82, 255)
+
+    elif self._demo or (lateral_active and longitudinal_active):
       if self._confidence_filter.x > 0.5:
         top_dot_color = rl.Color(0, 255, 204, 255)
         bottom_dot_color = rl.Color(0, 255, 38, 255)
@@ -77,9 +107,11 @@ class ConfidenceBall(Widget):
         top_dot_color = rl.Color(255, 0, 21, 255)
         bottom_dot_color = rl.Color(255, 0, 89, 255)
 
-    elif ui_state.status == UIStatus.OVERRIDE:
-      top_dot_color = rl.Color(255, 255, 255, 255)
-      bottom_dot_color = rl.Color(82, 82, 82, 255)
+    elif lateral_active:
+      top_dot_color = bottom_dot_color = LAT_ONLY_COLOR
+
+    elif longitudinal_active:
+      top_dot_color = bottom_dot_color = LONG_ONLY_COLOR
 
     else:
       top_dot_color = rl.Color(50, 50, 50, 255)

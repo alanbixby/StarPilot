@@ -118,7 +118,10 @@ def validate_runtime_assets() -> None:
 
 
 def render_stock_confidence(camera_owner: Any, rect: rl.Rectangle, state: OnroadState) -> None:
-  camera_owner.render_stock_confidence_layer(rect, lateral_active=state.lateral_active)
+  camera_owner.render_stock_confidence_layer(rect, lateral_active=state.lateral_active,
+                                             longitudinal_active=state.longitudinal_active,
+                                             driver_override_active=state.driver_override_active,
+                                             longitudinal_overridden=state.longitudinal_overridden)
 
 
 @lru_cache(maxsize=1)

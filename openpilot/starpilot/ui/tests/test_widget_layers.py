@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 
+from openpilot.starpilot.ui.onroad import following_distance_off_rail
 from openpilot.starpilot.ui.onroad_customization import (
   CLOCK_WIDGET, DEFAULT_WIDGET_ORDER, MODE_WIDGET, PROFILES, customization_metadata, decode_document, default_document, validate_document,
 )
@@ -111,6 +112,7 @@ def test_renderer_dispatches_each_widget_in_saved_order(profile, viewport):
   method = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == '_ordered_widgets')
   namespace: dict[str, Any] = {'CLOCK_WIDGET': CLOCK_WIDGET, 'MODE_WIDGET': MODE_WIDGET, 'placement': placement, 'widget_order': widget_order,
                              'RAIL_WIDGETS': RAIL_WIDGETS, 'STOPPED_TIMER_WIDGET': STOPPED_TIMER_WIDGET,
+                             'following_distance_off_rail': following_distance_off_rail,
                'manual_slc_confirmation': lambda profile, state: False, 'AlertSize': NS(NONE='none', FULL='full'), 'CameraViewChoice': NS(NONE='none'),
                'rl': NS(Rectangle=lambda x, y, width, height: NS(x=x, y=y, width=width, height=height))}
   exec(compile(ast.Module(body=[method], type_ignores=[]), str(source), 'exec'), namespace)
@@ -174,4 +176,8 @@ def test_renderer_dispatches_each_widget_in_saved_order(profile, viewport):
     stock = Mock()
     namespace['_ordered_widgets'](view, NS(x=0, y=0, width=476, height=240), state, stock_layer=stock)
     stock.assert_called_once()
+    assert 'following_distance' not in seen  # The stock ball owns the whole rail.
+    seen.clear()
+    document['layouts']['compact']['following_distance']['x'] = 300
+    namespace['_ordered_widgets'](view, NS(x=0, y=0, width=476, height=240), state, stock_layer=stock)
     assert seen.count('following_distance') == 1

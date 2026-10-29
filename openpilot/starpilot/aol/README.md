@@ -73,10 +73,12 @@ The software MAIN latch starts off each process session. Neutral must be seen
 before a fresh press; held-at-start or after expired CLU input does not turn it
 on. SET/RES requires this software MAIN latch on before longitudinal engagement;
 SET immediately after startup cannot engage LONG, while LFA can independently arm steering before MAIN.
-TCS health remains a separate prerequisite. The profile uses the unchanged
-native `0xC06`/alternative-experience `32` contract: physical LFA/MAIN/SET proof,
-required RX health, host leases, heartbeat and current native acknowledgment
-remain required. It changes no actuator limits or driver monitoring rules.
+TCS health remains a separate prerequisite. The profile uses the existing
+native `0xC06`/alternative-experience `32` word, now tightened to require
+bus-0 BCM `0x391` at 50 Hz with a 200 ms health lease. Physical LFA/MAIN/SET
+proof, required RX health, host leases, heartbeat and current native
+acknowledgment remain required. Actuator limits are unchanged; driver monitoring
+continues during lateral-only control.
 Native may retain an old physical token within a session, including ordinary
 SET authority across some TCS faults. Host withdrawal and the ordinary state
 machine prevent automatic re-engagement; healthy CAN alone is not a gesture.

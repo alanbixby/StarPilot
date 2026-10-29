@@ -46,9 +46,10 @@ class _DiagnosticRecorder:
 
 def construct(*, escc, alpha_long, mads=False):
   params = Params()
-  for name, value in (('OpenpilotEnabledToggle', True), ('SafeMode', False), ('AlwaysOnLateral', mads),
+  for name, value in (('OpenpilotEnabledToggle', True), ('SafeMode', False), ('AlwaysOnLateral', mads), ('SonataMadsButtons', mads),
                       ('IsReleaseBranch', False), ('AlphaLongitudinalEnabled', alpha_long), ('IsOffroad', False)):
     params.put_bool(name, value, block=True)
+  assert params.get_bool('SonataMadsButtons') == mads
   params.put('MainCruiseButtonControl', 0, block=True)
   params.put('LKASButtonControl', 0, block=True)
   sends, inits, factory_cps = [], [], []

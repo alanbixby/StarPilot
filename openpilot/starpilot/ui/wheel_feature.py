@@ -30,8 +30,8 @@ class WheelFeature:
     return base + (True,) if self.owner.configuration_longitudinal() else base
 
   def mads_selected(self):
-    from opendbc.car.hyundai.sonata_mads import eligible
-    return bool(eligible(self.owner.vehicle_params()) and read_saved(self.owner.params, 'SonataMadsButtons', 8) == (b'1', True))
+    from openpilot.starpilot.car.hyundai.sonata_mads import capture
+    return capture(self.owner.vehicle_params(), self.owner.params)
 
   def choices(self, key):
     cp = self.owner.vehicle_params()

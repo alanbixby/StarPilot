@@ -11,6 +11,7 @@ from openpilot.starpilot.galaxy.settings import AuthorityContext, SettingsGatewa
 def test_mads_profile_settings_and_superseded_actions():
   with tempfile.TemporaryDirectory() as directory:
     params = Params(directory)
+    params.put_bool('AlwaysOnLateral', True, block=True)
     cp = vehicle_params(CAR.HYUNDAI_SONATA_HYBRID, lda=True)
     initial_cp = cp.to_dict()
     context = AuthorityContext(True, cp, cp.to_bytes())
@@ -49,6 +50,20 @@ def test_mads_profile_settings_and_superseded_actions():
     assert len(overridden) == 5
     assert all(row['value'] == 'Set by MADS' and not row['available'] for row in overridden)
     assert {key: params.get(key) for key in keys} == before
+    # Master-off restores effective ownership without erasing the saved profile.
+    view = page()
+    index = next(i for i, row in enumerate(view['rows']) if row['label'] == 'Sunnypilot MADS Buttons')
+    pending = gateway.preview(view['view'], index, 0, 'session', b'generation', value='Off')
+    params.put_bool('AlwaysOnLateral', False, block=True)
+    assert not gateway.confirm(pending['intent'], 'session', b'generation')
+    row = next(row for row in page()['rows'] if row['label'] == 'Sunnypilot MADS Buttons')
+    assert row['value'] == 'On' and not row['available']
+    assert next(row for row in page()['rows'] if row['label'] == 'Brake pause below')['value'] != 'Set by MADS'
+    assert next(row for row in page('wheel')['rows'] if row['label'] == 'LKAS press')['value'] == 'Bookmark'
+    assert params.get_bool('SonataMadsButtons')
+    assert {key: params.get(key) for key in keys} == before
+    params.put_bool('AlwaysOnLateral', True, block=True)
+    assert next(row for row in page()['rows'] if row['label'] == 'Brake pause below')['value'] == 'Set by MADS'
     context = replace(context, parked=False)
     assert not next(row for row in page()['rows'] if row['label'] == 'Sunnypilot MADS Buttons')['available']
     context = replace(context, parked=True)

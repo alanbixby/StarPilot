@@ -1,6 +1,6 @@
 """Parked opt-in for the exact Sonata default MADS button lifecycle."""
 from opendbc.car.hyundai.sonata_mads import eligible
-from openpilot.starpilot.car.hyundai.sonata_mads import PARAM
+from openpilot.starpilot.car.hyundai.sonata_mads import PARAM, capture
 from openpilot.starpilot.saved_document import commit_exact
 from openpilot.starpilot.saved_source import read_saved
 from openpilot.starpilot.ui.feature_settings_state import FeatureRow
@@ -23,18 +23,20 @@ class SonataMadsFeature:
             tuple((str(config.safetyModel), int(config.safetyParam)) for config in cp.safetyConfigs))
 
   def selected(self):
-    return self.capability() is not None and read_saved(self.owner.params, PARAM, 8) == (b'1', True)
+    return capture(self.owner.vehicle_params(), self.owner.params)
 
   def rows(self, parked):
     capability = self.capability()
     if capability is None:
       return ()
+    from openpilot.starpilot.aol.intent import read_settings
+    master = read_settings(self.owner.params).enabled
     raw, readable = read_saved(self.owner.params, PARAM, 8)
     valid = readable and raw in (None, b'0', b'1')
     return (FeatureRow(PARAM, LABEL, ('On' if raw == b'1' else 'Off') if valid else 'Invalid saved choice',
                        source=raw, choices=('Off', 'On') if valid else (), default_value='Off',
-                       available=parked and self.owner.authority('parked_preferences') and valid,
-                       reason=DESCRIPTION if valid else 'Invalid saved choice', capability=capability),)
+                       available=parked and master and self.owner.authority('parked_preferences') and valid,
+                       reason=('Requires Always On Lateral.' if not master else DESCRIPTION) if valid else 'Invalid saved choice', capability=capability),)
 
   def apply(self, request):
     if (request.key != PARAM or request.value not in ('Off', 'On') or not request.confirmation or
@@ -43,7 +45,8 @@ class SonataMadsFeature:
       return False
 
     def authorized():
-      return (self.owner.authority('parked_preferences') and bool(request.vehicle_fingerprint) and
+      from openpilot.starpilot.aol.intent import read_settings
+      return (read_settings(self.owner.params).enabled and self.owner.authority('parked_preferences') and bool(request.vehicle_fingerprint) and
               self.owner.vehicle_fingerprint() == request.vehicle_fingerprint and request.capability is not None and
               self.capability() == request.capability)
 

@@ -203,11 +203,12 @@ class SelfdriveD:
     # read params
     self.is_metric = self.params.get_bool("IsMetric")
     from openpilot.starpilot.car.hyundai.sonata_mads import capture, MadsProfileAgreement, effective_settings as sonata_mads_settings
-    self.sonata_mads_buttons = capture(self.CP, self.params)
+    startup_aol_settings = read_settings(self.params)
+    self.sonata_mads_buttons = capture(self.CP, self.params, settings=startup_aol_settings)
     from opendbc.car.hyundai.sonata_mads import eligible as sonata_mads_eligible
     self.sonata_mads_agreement = MadsProfileAgreement(self.sonata_mads_buttons) if sonata_mads_eligible(self.CP) else None
     self.aol_cruise_main_required = self.aol_cruise_main_required and not self.sonata_mads_buttons
-    self.aol_settings = sonata_mads_settings(self.CP, read_settings(self.params),
+    self.aol_settings = sonata_mads_settings(self.CP, startup_aol_settings,
                                            mads_buttons=self.sonata_mads_buttons) if self.aol_replay else None
     self.is_ldw_enabled = self.params.get_bool("IsLdwEnabled")
     self.disengage_on_accelerator = self.params.get_bool("DisengageOnAccelerator")

@@ -373,9 +373,6 @@ class Car:
     migrate_lkas_default(self.CP, self.params)
     self.is_metric = self.params.get_bool("IsMetric")
     from openpilot.starpilot.car.hyundai.sonata_mads import capture, MadsDisplayState
-    self.sonata_mads_buttons = capture(self.CP, self.params)
-    if self.CP.brand == 'hyundai' and hasattr(self.CI.CS, 'sonata_mads_buttons'):
-      self.CI.CS.sonata_mads_buttons = self.sonata_mads_buttons
     aol_policy = aol_policy_for(self.CP)
     if aol_policy.full_axis_runtime_required and not self.aol_replay:
       self.aol_replay = True
@@ -384,7 +381,9 @@ class Car:
       self.pm.sock['aolIntentWire'] = messaging.pub_sock('aolIntentWire')
     initialize_aol_preference(self.CP)
     from openpilot.starpilot.car.hyundai.sonata_mads import effective_settings as sonata_mads_settings
-    self.aol_settings = sonata_mads_settings(self.CP, read_settings(self.params), mads_buttons=self.sonata_mads_buttons) if self.aol_replay else None
+    startup_aol_settings = read_settings(self.params)
+    self.sonata_mads_buttons = capture(self.CP, self.params, settings=startup_aol_settings)
+    self.aol_settings = sonata_mads_settings(self.CP, startup_aol_settings, mads_buttons=self.sonata_mads_buttons) if self.aol_replay else None
     self.sonata_mads_display = MadsDisplayState(available=bool(
       self.sonata_mads_buttons and self.aol_settings is not None and self.aol_settings.enabled))
     self.aol_qualified = bool(self.aol_settings is not None and
@@ -407,6 +406,9 @@ class Car:
         raise RuntimeError('AOL requires the exact vehicle safety configuration')
       config.safetyParam |= aol_policy.safety_param_addition
       self.CP.alternativeExperience |= aol_policy.alternative_experience_addition
+    if self.CP.brand == 'hyundai' and hasattr(self.CI.CS, 'sonata_mads_buttons'):
+      from opendbc.car.hyundai.classic_long_aol import independent_buttons_qualified
+      self.CI.CS.sonata_mads_buttons = bool(self.sonata_mads_buttons and independent_buttons_qualified(self.CP))
     self.vehicle_startup.finalize_aol_configuration(self.CI)
     self.learning_stamp_observer = None
     self.learning_send_mono_ns = self.learning_send_committed_mono_ns = 0
@@ -1118,7 +1120,7 @@ class Car:
     self.car_gps_publisher.update(self.CI.CS, self.pm, companion)
     if self.sonata_mads_buttons:
       self.sonata_mads_display.record(int(cs_send.logMonoTime), valid=bool(cs_send.valid and not CS.canTimeout),
-        producer=self.slc_producer_session, session=self.aol_axis_session(), context=self.sonata_display_context())
+        producer=self.slc_producer_session, session=self.sonata_display_session(), context=self.sonata_display_context())
     self.pm.send('carState', cs_send)
     if getattr(self, 'learning_stamp_observer', None) is not None:
       self.learning_car_state_source_ns = int(cs_send.logMonoTime)
@@ -1559,6 +1561,11 @@ class Car:
       time.sleep(.01)
     return False
 
+  def sonata_display_session(self):
+    # Bind both publication and consumption to feedback's accepted identity;
+    # observing a different axis alone cannot move this display source ring.
+    return getattr(self.aol_transport_feedback, 'session', '')
+
   def sonata_display_context(self):
     return (id(self.CI), id(self.CI.CS), id(self.CI.CC), id(self.vehicle_startup.owner), self.ci_initialized)
 
@@ -1567,7 +1574,7 @@ class Car:
     if getattr(self, 'sonata_mads_buttons', False) and display is not None and self.CI.CC is not None:
       self.CI.CC.lateral_display = display.snapshot(self.sm,
         now_ns=int(self.sm.logMonoTime['carControl']) if REPLAY else time.monotonic_ns(),
-        producer=self.slc_producer_session, session=getattr(self.aol_transport_feedback, 'session', ''),
+        producer=self.slc_producer_session, session=self.sonata_display_session(),
         context=self.sonata_display_context(), source_healthy=bool(self.CI.CS.out.canValid and not self.CI.CS.out.canTimeout))
     return self.CI.apply(CC, now_nanos, **kwargs)
 

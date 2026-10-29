@@ -10,10 +10,12 @@ SUPERSEDED_BUTTONS = frozenset(('LKASButtonControl', 'MainCruiseButtonControl', 
                                'LongCancelButtonControl', 'VeryLongCancelButtonControl'))
 
 
-def capture(cp, params):
-  # Called once by each process owner. Saved changes cannot alter this session.
+def capture(cp, params, *, settings=None):
+  # Runtime owners pass their single startup settings snapshot and retain the result.
   from openpilot.starpilot.saved_source import read_saved
-  return bool(eligible(cp) and read_saved(params, PARAM, 8) == (b'1', True))
+  from openpilot.starpilot.aol.intent import read_settings
+  settings = read_settings(params) if settings is None else settings
+  return bool(eligible(cp) and settings.enabled and read_saved(params, PARAM, 8) == (b'1', True))
 
 
 def effective_settings(cp, settings, *, mads_buttons=False):

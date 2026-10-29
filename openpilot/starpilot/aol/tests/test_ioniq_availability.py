@@ -52,7 +52,7 @@ def assert_fresh_ordinary_recovery(sd, axis, command, source):
 
 
 class IoniqAvailabilityTests(unittest.TestCase):
-  def _authority_callers(self, full_op, *, cp=None, intent_companion=None, genuine_events=False, initial_panda_config=None):
+  def _authority_callers(self, full_op, *, cp=None, intent_companion=None, genuine_events=False, initial_panda_config=None, aol_enabled=True):
     self.enterContext(mock.patch('openpilot.selfdrive.selfdrived.selfdrived.REPLAY', False))
     from opendbc.car.gm.tests.test_bolt_volt_configurations import ordinary_params
     from opendbc.car.gm.values import CAR
@@ -64,7 +64,7 @@ class IoniqAvailabilityTests(unittest.TestCase):
     params = Params()
     params.put_bool('OpenpilotEnabledToggle', True, block=True)
     params.put_bool('SafeMode', False, block=True)
-    params.put_bool('AlwaysOnLateral', True, block=True)
+    params.put_bool('AlwaysOnLateral', aol_enabled, block=True)
     supplied_cp = cp is not None
     if cp is None:
       cp = ordinary_params(CAR.CHEVROLET_VOLT_ASCM, alpha=True, sascm=True, radar=True)

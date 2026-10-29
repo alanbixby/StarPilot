@@ -1,4 +1,5 @@
 """Original carState companions from Card's nonconflating intent transport."""
+from collections import deque
 from dataclasses import replace
 
 from openpilot.cereal import messaging
@@ -34,8 +35,9 @@ class IntentCompanion:
     self.last_rejection = None
     self.last_drain_count = 0
     self.last_drain_ok = True
-    self.mads_profile_choice = None
-    self.mads_profile_consistent = True
+    self.mads_profiles = {}
+    self.mads_profile_pending = deque()
+    self.mads_profile_overflow = False
 
   def _observe(self, stamp, valid, raw):
     stamp = int(stamp)
@@ -47,8 +49,6 @@ class IntentCompanion:
     if intent is not None and (self.latest is None or stamp >= self.latest[0]):
       if self.session is not None and intent.producerSessionId != self.session:
         self.integrity_epoch += 1
-        self.mads_profile_choice = None
-        self.mads_profile_consistent = True
         self.verified_sm_projection = None
         self.raw_projections.clear()
         self.samples.clear()
@@ -74,6 +74,13 @@ class IntentCompanion:
       self.verified_sm_projection = None
       self.raw_projections.clear()
     sample = (stamp, valid, intent)
+    if valid and intent is not None:
+      # Keep intake provenance outside the replaceable source caches. Freshness
+      # is checked on the decision clock, before pruning or consulting SM.
+      if len(self.mads_profile_pending) >= MAX_DRAIN:
+        self.mads_profile_overflow = True
+      else:
+        self.mads_profile_pending.append(sample)
     self.samples[stamp] = sample
     if self.latest is None or stamp >= self.latest[0]:
       self.latest = sample
@@ -87,6 +94,29 @@ class IntentCompanion:
                 0 < stamp <= now_ns and now_ns - stamp <= INTENT_MAX_AGE_NS and
                 intent.observedMonoTime <= now_ns <= intent.validUntilMonoTime and
                 now_ns - intent.observedMonoTime <= INTENT_MAX_AGE_NS)
+
+  @property
+  def mads_profile_consistent(self):
+    profile = self.mads_profiles.get(self.session)
+    return not self.mads_profile_overflow and (profile is None or profile[1])
+
+  def _remember_profiles(self, now_ns):
+    while self.mads_profile_pending:
+      sample = self.mads_profile_pending.popleft()
+      if not self._fresh(sample, now_ns):
+        continue
+      intent = sample[2]
+      producer = intent.producerSessionId
+      previous = self.mads_profiles.get(producer)
+      if previous is None:
+        if len(self.mads_profiles) >= MAX_COMPANIONS:
+          # Never evict a rejected/previous producer back into eligibility.
+          # A consumer restart is required after exhausting this bounded journal.
+          self.mads_profile_overflow = True
+          continue
+        previous = (intent.madsButtons, True)
+      self.mads_profiles[producer] = (previous[0], bool(previous[1] and intent.madsButtonsConsistent and
+                                                      previous[0] == intent.madsButtons))
 
   def drain(self, *, max_messages=MAX_DRAIN):
     """Read bounded transport before sampling the decision clock."""
@@ -122,8 +152,9 @@ class IntentCompanion:
 
   def current(self, sm, *, source_ns, now_ns, drain=True):
     self.last_rejection = None
-    if drain and not self.drain():
-      return self._reject('drain_overrun')
+    if drain:
+      self.drain()
+    self._remember_profiles(now_ns)
     if not self.last_drain_ok:
       return self._reject('drain_overrun')
     projection = None
@@ -145,6 +176,7 @@ class IntentCompanion:
         projection = (stamp, True, verified[1])
       else:
         self._observe(stamp, sm.valid.get(INTENT_SERVICE, False), sm[INTENT_SERVICE])
+    self._remember_profiles(now_ns)
     for stamp in tuple(self.samples):
       if not 0 < stamp <= now_ns or now_ns - stamp > INTENT_MAX_AGE_NS:
         del self.samples[stamp]
@@ -154,17 +186,6 @@ class IntentCompanion:
     if not (sm.seen.get(INTENT_SERVICE, False) and sm.valid.get(INTENT_SERVICE, False) and
             sm.alive.get(INTENT_SERVICE, False)):
       return self._reject('sm_unavailable')
-    # An immutable profile pulse in any fresh received companion cannot hide
-    # behind a normally selected preceding source or a later restored bit.
-    profile_samples = [sample for sample in self.samples.values() if self._fresh(sample, now_ns)]
-    if projection is not None:
-      profile_samples.append(projection)  # Exact verified SM identity contributes vetoes only.
-    for _, _, value in profile_samples:
-      if value.producerSessionId != self.session:
-        continue
-      if self.mads_profile_choice is None:
-        self.mads_profile_choice = value.madsButtons
-      self.mads_profile_consistent &= bool(value.madsButtonsConsistent and value.madsButtons == self.mads_profile_choice)
     pair = self.samples.get(source_ns)
     sm_sample = projection if projection is not None else self.samples.get(int(sm.logMonoTime[INTENT_SERVICE]))
     if pair is None or self.latest is None or sm_sample is None:

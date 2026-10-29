@@ -8,7 +8,7 @@ import pytest
 from opendbc.car.hyundai.values import CAR
 from openpilot.common.params import Params
 from openpilot.common.prefix import OpenpilotPrefix
-from openpilot.starpilot.aol.intent_companion import IntentCompanion
+from openpilot.starpilot.aol.intent_companion import IntentCompanion, MAX_COMPANIONS, MAX_DRAIN
 from openpilot.starpilot.aol.runtime import current_intent
 from openpilot.starpilot.aol.tests import test_ioniq_availability as caller_fixture
 from openpilot.starpilot.aol.tests.test_classic_long_profiles import params as classic_params
@@ -24,6 +24,114 @@ class SM(dict):
   def __init__(self, event):
     super().__init__(aolIntentWire=bytes(event.aolIntentWire))
     self.logMonoTime = {'aolIntentWire': int(event.logMonoTime)}
+
+
+@pytest.mark.parametrize('interruption', ['producer_round_trip', 'sm_unavailable'])
+def test_real_selfdrived_intake_remembers_conflicts_before_projection_and_session_switch(interruption):
+  case = caller_fixture.IoniqAvailabilityTests(methodName='runTest')
+  with OpenpilotPrefix(), patch.dict(os.environ, {'SIMULATION': '0', 'AOL_REPLAY_RUNTIME': '1'}):
+    Params().put_bool('SonataMadsButtons', True, block=True)
+    try:
+      sd, _, drive = case._authority_callers(False,
+        cp=classic_params(CAR.HYUNDAI_SONATA_HYBRID, lda=True), genuine_events=True)
+      original = wire(0, selected=True)
+      with intent_receive(sd, side_effect=[original.as_reader(), None]):
+        axis, _, command = drive(0, intent_message=original)
+      assert axis.lateralActive and command.latActive
+      changed = wire(1, selected=False)
+      if interruption == 'producer_round_trip':
+        other, restored = wire(2, selected=True, producer='other-card'), wire(3, selected=True)
+        with intent_receive(sd, side_effect=[changed.as_reader(), other.as_reader(), restored.as_reader(), None]):
+          axis, _, command = drive(3, intent_message=restored)
+        assert sd.aol_last_intent is None and sd.sonata_mads_agreement.rejected
+      else:
+        original.valid = False  # Real SM unavailability while the raw companion is valid and fresh.
+        with intent_receive(sd, side_effect=[changed.as_reader(), None]):
+          axis, _, command = drive(1, intent_message=original)
+        assert sd.aol_last_intent is None
+      assert not axis.lateralActive and not command.latActive and not command.longActive
+      # The contradictory raw packet has now aged out; restoring its producer
+      # and bit cannot erase the ingestion provenance or re-enable the owner.
+      for tick in range(5, 9):
+        restored = wire(tick, selected=True)
+        with intent_receive(sd, side_effect=[restored.as_reader(), None]):
+          axis, _, command = drive(tick, intent_message=restored)
+        assert sd.sonata_mads_agreement.rejected and sd.aol_last_intent is None
+        assert not axis.lateralActive and not command.latActive and not command.longActive
+    finally:
+      case.doCleanups()
+
+
+def test_real_selfdrived_bounded_intake_history_never_evicts_rejected_producer():
+  case = caller_fixture.IoniqAvailabilityTests(methodName='runTest')
+  with OpenpilotPrefix(), patch.dict(os.environ, {'SIMULATION': '0', 'AOL_REPLAY_RUNTIME': '1'}):
+    Params().put_bool('SonataMadsButtons', True, block=True)
+    try:
+      sd, _, drive = case._authority_callers(False,
+        cp=classic_params(CAR.HYUNDAI_SONATA_HYBRID, lda=True), genuine_events=True)
+      original, changed, other = wire(0, selected=True), wire(1, selected=False), wire(2, selected=True, producer='other')
+      with intent_receive(sd, side_effect=[original.as_reader(), None]):
+        drive(0, intent_message=original)
+      # The owner only sees the final *other* producer; it cannot journal A's
+      # transient contradiction itself. Intake must preserve that provenance.
+      with intent_receive(sd, side_effect=[changed.as_reader(), other.as_reader(), None]):
+        drive(2, intent_message=other)
+      assert 'card-startup' not in sd.sonata_mads_agreement.rejected_producers
+      for tick in range(3, MAX_COMPANIONS + 4):
+        event = wire(tick, selected=True, producer=f'card-{tick}')
+        with intent_receive(sd, side_effect=[event.as_reader(), None]):
+          drive(tick, intent_message=event)
+      companion = sd.aol_intent_companion
+      assert companion.mads_profile_overflow
+      assert len(companion.mads_profiles) == MAX_COMPANIONS
+      assert companion.mads_profiles['card-startup'] == (True, False)
+      assert not companion.mads_profile_pending
+      for tick, producer in enumerate(('card-startup', 'yet-another-card'), start=30):
+        event = wire(tick, selected=True, producer=producer)
+        with intent_receive(sd, side_effect=[event.as_reader(), None]):
+          axis, _, command = drive(tick, intent_message=event)
+        assert sd.aol_last_intent is None and sd.sonata_mads_agreement.rejected
+        assert not axis.lateralActive and not command.latActive and not command.longActive
+    finally:
+      case.doCleanups()
+
+
+@pytest.mark.parametrize('bad', ['invalid_envelope', 'unqualified', 'future', 'expired'])
+def test_wire_intake_journals_only_originally_fresh_valid_profile_facts(bad):
+  companion = IntentCompanion(object())
+  first = wire(0, selected=True)
+
+  def receive(event, *, now, sm=None):
+    with patch('openpilot.starpilot.aol.intent_companion.messaging.recv_one_or_none', side_effect=[event.as_reader(), None]):
+      return companion.current(SM(event if sm is None else sm), source_ns=int(event.logMonoTime), now_ns=now)
+
+  assert receive(first, now=BASE) is not None
+  changed = wire(1, selected=False)
+  if bad == 'invalid_envelope':
+    changed.valid = False
+  elif bad == 'unqualified':
+    changed.aolIntentWire = encode_intent(replace(decode_intent(changed.aolIntentWire), settingsQualified=False))
+  now = BASE if bad == 'future' else BASE + (50_000_000 if bad == 'expired' else 10_000_000)
+  assert receive(changed, now=now, sm=first) is None
+  restored = wire(6, selected=True)
+  result = receive(restored, now=BASE + 60_000_000)
+  assert result is not None and result.madsButtonsConsistent
+  assert result.carStateLogMonoTime == result.observedMonoTime == BASE + 60_000_000
+  assert result.validUntilMonoTime == BASE + 260_000_000
+
+
+def test_wire_intake_profile_backlog_is_bounded_and_fails_closed_on_overflow():
+  companion = IntentCompanion(object())
+  packets = [wire(tick, selected=True) for tick in range(MAX_DRAIN)]
+  with patch('openpilot.starpilot.aol.intent_companion.messaging.recv_one_or_none',
+             side_effect=[event.as_reader() for event in packets]):
+    assert not companion.drain()
+  assert len(companion.mads_profile_pending) == MAX_DRAIN
+  newer = wire(MAX_DRAIN, selected=True)
+  with patch('openpilot.starpilot.aol.intent_companion.messaging.recv_one_or_none', side_effect=[newer.as_reader(), None]):
+    result = companion.current(SM(newer), source_ns=int(newer.logMonoTime), now_ns=int(newer.logMonoTime))
+  assert not companion.mads_profile_pending and companion.mads_profile_overflow
+  assert result is not None and not result.madsButtonsConsistent
 
 
 @pytest.mark.parametrize('selected', [False, True])

@@ -61,6 +61,7 @@ def test_opt_in_is_exact_scoped_and_preserves_saved_choices(tmp_path):
   from openpilot.starpilot.car.hyundai.sonata_mads import capture
 
   saved = Params(str(tmp_path))
+  saved.put_bool('AlwaysOnLateral', True, block=True)
   original = AolSettings(True, 10., 8, 9, (1, 5, 6), (8, 8, 8))
   cp = params(CAR.HYUNDAI_SONATA_HYBRID, lda=True)
   for raw in (None, b'0', b'garbage', b'1\n'):

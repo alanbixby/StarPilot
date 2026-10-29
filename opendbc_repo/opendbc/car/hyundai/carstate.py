@@ -366,7 +366,7 @@ class CarState(CarStateBase):
       self.ev6_aol_samples = tuple((main, 0, cruise) for main, cruise in zip(
         values['CF_Clu_CruiseSwMain'], values['CF_Clu_CruiseSwState'], strict=True))
 
-    if self.sonata_main is not None and self.sonata_mads_buttons:
+    if self.sonata_main is not None and self.sonata_mads_buttons and independent_buttons_qualified(self.CP):
       self.long_buttons = self.sonata_main
       values = cp.vl_all['CLU11']
       self.sonata_main.observe_current(((main, False, cruise) for main, cruise in zip(

@@ -46,7 +46,8 @@ and negative safety tests with the corresponding vehicle port.
 
 `SonataMadsButtons` defaults off. The parked **Sunnypilot MADS Buttons** preference
 is shown only for the qualified Sonata Hybrid classic CAN OP-long configuration
-with a detected lane button. Card and SelfdriveD independently capture it once at startup. Card configures
+with a detected lane button. Card and SelfdriveD independently capture its effective choice once at startup,
+requiring the AOL master to be enabled; disabling the master preserves the saved MADS preference. Card configures
 its CarState directly and publishes the fixed choice on owned
 `IntentWire.madsButtons @13`. A missing legacy bit is off; disagreement rejects
 that producer session permanently, including later packets advertising a matching
@@ -54,7 +55,10 @@ choice. Pair/latest/SM restrictions, verified older SM projections and reconcile
 sources preserve immutable-profile contradictions without renewing any source
 clock. Consumer-only consistency provenance cannot be serialized as a producer
 wire, and rejected producer identities cannot regain eligibility by cycling
-through another producer. Replacing a producer requires a newly unarmed startup and fresh ordinary
+through another producer. Intake retains at most 16 producer profile records and
+32 pending messages, independently of the replaceable source caches; exhausting
+this history fails closed until the consumer restarts. Only originally fresh,
+valid, qualified facts enter the producer history. Replacing a producer requires a newly unarmed startup and fresh ordinary
 physical authorization. Other Hyundai profiles and the
 existing defaults retain their behavior.
 
@@ -67,7 +71,9 @@ already armed steering. They cannot invent a new steering authorization.
 
 The software MAIN latch starts off each process session. Neutral must be seen
 before a fresh press; held-at-start or after expired CLU input does not turn it
-on. TCS health remains a separate prerequisite. The profile uses the unchanged
+on. SET/RES requires this software MAIN latch on before longitudinal engagement;
+SET immediately after startup cannot engage LONG, while LFA can independently arm steering before MAIN.
+TCS health remains a separate prerequisite. The profile uses the unchanged
 native `0xC06`/alternative-experience `32` contract: physical LFA/MAIN/SET proof,
 required RX health, host leases, heartbeat and current native acknowledgment
 remain required. It changes no actuator limits or driver monitoring rules.
@@ -77,7 +83,8 @@ machine prevent automatic re-engagement; healthy CAN alone is not a gesture.
 
 The profile supersedes LKAS, MAIN and CANCEL assignments and the brake-pause
 threshold in memory. Their saved values are preserved and restored on the next
-startup with the profile off. The UI shows those rows as **Set by MADS**.
+startup with the profile or AOL master off. The UI shows those rows as **Set by MADS**
+only while the saved profile and AOL master are enabled.
 
 SelfdriveD transports fresh retained intent as the display-only
 `aolAxisState.displayIntentValid/displayIntentEnabled` facts. Before every

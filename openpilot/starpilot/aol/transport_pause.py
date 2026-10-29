@@ -9,7 +9,7 @@ def cp_identity(cp):
   return (str(cp.brand), str(cp.carFingerprint), int(cp.flags), int(cp.alternativeExperience),
           bool(cp.passive), bool(cp.dashcamOnly), bool(cp.notCar),
           bool(cp.openpilotLongitudinalControl), bool(cp.pcmCruise),
-          tuple((int(c.safetyModel.raw), int(c.safetyParam)) for c in cp.safetyConfigs), bool(getattr(cp, 'sonataMadsButtons', False)))
+          tuple((int(c.safetyModel.raw), int(c.safetyParam)) for c in cp.safetyConfigs))
 
 
 def _configured_transport_native(sm, cp, session, now_ns, native=None, *, require_longitudinal=True, allow_restricted_lateral=False):
@@ -265,7 +265,9 @@ class TransportPause:
 
 class TransportPauseFeedback:
   """Card accepts pause provenance only after a healthy same-session baseline."""
-  def __init__(self, cp):
+  def __init__(self, cp, *, mads_buttons=False):
+    from opendbc.car.hyundai.sonata_mads import eligible as sonata_mads_eligible
+    self.mads_buttons = bool(mads_buttons and sonata_mads_eligible(cp))
     self.cp = cp_identity(cp)
     self.session = ''
     self.sequence = 0
@@ -428,7 +430,7 @@ class TransportPauseFeedback:
     if (not latched or self.failed or self.paused or self.pending_event and not pending or self.retention_started_ns or
         not self.session or not self.lateral_baseline_ns or not self.lateral_inventory or
         not (policy := policy_for(cp)).intent_supported or
-        policy.cruise_main_required and not cs.cruiseState.available or
+        policy.cruise_main_required and not self.mads_buttons and not cs.cruiseState.available or
         str(axis.sessionId) != self.session or
         not producer or producer != self.availability_producer or axis.intentProducerSessionId != producer or
         axis.intentIntegrityEpoch != self.availability_epoch or
@@ -1375,7 +1377,7 @@ class TransportPauseFeedback:
   def observe(self, sm, cp, cs, now_ns, *, latched=True, cancel_source_ns=0, brake_source_ns=0,
               gm_withdrawal_source_ns=0, intent_producer_session='', main_arm_ns=0, startup_calibration_pending=False, intent_paused=False):
     from openpilot.starpilot.car.hyundai.sonata_mads import lateral_transport_view
-    sm = lateral_transport_view(sm, cp, cs)
+    sm = lateral_transport_view(sm, cp, cs, mads_buttons=self.mads_buttons)
     self.ordinary_warning_qualified = False
     self.temporary_host_qualified = False
     self.qualified = False
@@ -1643,13 +1645,12 @@ class TransportPauseFeedback:
         native = _configured_transport_native(sm, cp, str(axis.sessionId), now_ns)
       from opendbc.car import structs
       previous = self.signature
-      from opendbc.car.hyundai.sonata_mads import configured as sonata_mads_configured
       inactive = bool(not self.failed and self.session and previous is not None and
         previous[5] == 'none' and previous[14:16] == signature[14:16] and
         intent_producer_session and signature[14] == intent_producer_session and
         (intent_paused or bool(getattr(self, 'temporary_eps_event_ns', 0)) or not any(previous[9:13])) and
         str(axis.mode) == 'off' and not any(signature[9:13]) and
-        (cs.cruiseState.available or sonata_mads_configured(cp)) and not cs.accFaulted and not cs.vehicleSensorsInvalid and
+        (cs.cruiseState.available or self.mads_buttons) and not cs.accFaulted and not cs.vehicleSensorsInvalid and
         not cs.doorOpen and not cs.steeringDisengage and
         (cs.gearShifter in (structs.CarState.GearShifter.drive, structs.CarState.GearShifter.sport,
                            structs.CarState.GearShifter.low, structs.CarState.GearShifter.brake) or

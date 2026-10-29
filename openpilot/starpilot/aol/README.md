@@ -27,8 +27,8 @@ independent of each vehicle's Panda safety policy.
 `aolAxisState` uses custom slot 16. Intent and safety use reserved Data events 125
 and 124 with bounded, versioned flat Cap'n Proto payloads. Mapd slots 17–19 remain
 separate. Decode stored messages with their writing schema; never reinterpret
-an incompatible cache or reuse an occupied event identifier. `CarControl.lateralDisplay`
-is an additive display-only vehicle-schema extension; it never grants actuator authority.
+an incompatible cache or reuse an occupied event identifier. Upstream vehicle
+schemas remain unchanged.
 
 `AolBrakePauseSpeedMps` stores meters per second. If absent, `PauseAOLOnBrake`
 retains its historical effective meters-per-second value, regardless of the old
@@ -46,8 +46,16 @@ and negative safety tests with the corresponding vehicle port.
 
 `SonataMadsButtons` defaults off. The parked **Sunnypilot MADS Buttons** preference
 is shown only for the qualified Sonata Hybrid classic CAN OP-long configuration
-with a detected lane button. Card captures it in `CarParams.sonataMadsButtons`
-before the existing LONG startup transaction. Other Hyundai profiles and the
+with a detected lane button. Card and SelfdriveD independently capture it once at startup. Card configures
+its CarState directly and publishes the fixed choice on owned
+`IntentWire.madsButtons @13`. A missing legacy bit is off; disagreement rejects
+that producer session permanently, including later packets advertising a matching
+choice. Pair/latest/SM restrictions, verified older SM projections and reconciled
+sources preserve immutable-profile contradictions without renewing any source
+clock. Consumer-only consistency provenance cannot be serialized as a producer
+wire, and rejected producer identities cannot regain eligibility by cycling
+through another producer. Replacing a producer requires a newly unarmed startup and fresh ordinary
+physical authorization. Other Hyundai profiles and the
 existing defaults retain their behavior.
 
 With the profile selected and AOL enabled, a fresh lane-button press toggles
@@ -72,10 +80,16 @@ threshold in memory. Their saved values are preserved and restored on the next
 startup with the profile off. The UI shows those rows as **Set by MADS**.
 
 SelfdriveD transports fresh retained intent as the display-only
-`aolAxisState.displayIntentValid/displayIntentEnabled` facts. Controls copies
-these to `CarControl.lateralDisplay` only for a current, exact carState source.
+`aolAxisState.displayIntentValid/displayIntentEnabled` facts. Before every
+`CI.apply`, Card injects a `LateralDisplay` controller input joined to its own
+recent valid carState publications, producer and accepted axis session, with
+an original 30 ms source lease. This permits the normal preceding-command
+ordering. Producer, axis-session and CI/startup replacement clear the source
+history. No upstream CarParams or CarControl fields are added.
 `available` captures the qualified profile and AOL master at startup and stays
 set on stale input; `valid` and `enabled` clear on invalid or stale input.
+The controller consumes the input once per update and retains only static
+availability, so a missed refresh cannot retain a white paused wheel.
 Enabled intent may remain true through temporary output gates, so the factory
 display can distinguish paused steering from an explicit driver withdrawal.
 Neither these facts nor host/native regression tests establish on-car

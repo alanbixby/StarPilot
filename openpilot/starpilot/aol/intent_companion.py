@@ -9,6 +9,17 @@ MAX_COMPANIONS = 16
 MAX_DRAIN = 32
 
 
+def restrict_intent(intent, restriction):
+  """Fold vetoes without renewing the selected source or hiding profile conflicts."""
+  return replace(intent, allowedLatch=intent.allowedLatch and restriction.allowedLatch,
+    pauseLateral=intent.pauseLateral or restriction.pauseLateral,
+    pauseLongitudinal=intent.pauseLongitudinal or restriction.pauseLongitudinal,
+    lateralArmed=intent.lateralArmed and restriction.lateralArmed,
+    optionalSetRelease=intent.optionalSetRelease and restriction.optionalSetRelease,
+    madsButtonsConsistent=bool(intent.madsButtonsConsistent and restriction.madsButtonsConsistent and
+                              intent.madsButtons == restriction.madsButtons))
+
+
 class IntentCompanion:
   def __init__(self, sock):
     self.sock = sock
@@ -23,6 +34,8 @@ class IntentCompanion:
     self.last_rejection = None
     self.last_drain_count = 0
     self.last_drain_ok = True
+    self.mads_profile_choice = None
+    self.mads_profile_consistent = True
 
   def _observe(self, stamp, valid, raw):
     stamp = int(stamp)
@@ -34,6 +47,8 @@ class IntentCompanion:
     if intent is not None and (self.latest is None or stamp >= self.latest[0]):
       if self.session is not None and intent.producerSessionId != self.session:
         self.integrity_epoch += 1
+        self.mads_profile_choice = None
+        self.mads_profile_consistent = True
         self.verified_sm_projection = None
         self.raw_projections.clear()
         self.samples.clear()
@@ -139,6 +154,17 @@ class IntentCompanion:
     if not (sm.seen.get(INTENT_SERVICE, False) and sm.valid.get(INTENT_SERVICE, False) and
             sm.alive.get(INTENT_SERVICE, False)):
       return self._reject('sm_unavailable')
+    # An immutable profile pulse in any fresh received companion cannot hide
+    # behind a normally selected preceding source or a later restored bit.
+    profile_samples = [sample for sample in self.samples.values() if self._fresh(sample, now_ns)]
+    if projection is not None:
+      profile_samples.append(projection)  # Exact verified SM identity contributes vetoes only.
+    for _, _, value in profile_samples:
+      if value.producerSessionId != self.session:
+        continue
+      if self.mads_profile_choice is None:
+        self.mads_profile_choice = value.madsButtons
+      self.mads_profile_consistent &= bool(value.madsButtonsConsistent and value.madsButtons == self.mads_profile_choice)
     pair = self.samples.get(source_ns)
     sm_sample = projection if projection is not None else self.samples.get(int(sm.logMonoTime[INTENT_SERVICE]))
     if pair is None or self.latest is None or sm_sample is None:
@@ -160,11 +186,8 @@ class IntentCompanion:
       _, _, latest = sample
       if latest.producerSessionId != intent.producerSessionId:
         return self._reject('producer_session_mismatch')
-      intent = replace(intent, allowedLatch=intent.allowedLatch and latest.allowedLatch,
-                       pauseLateral=intent.pauseLateral or latest.pauseLateral,
-                       pauseLongitudinal=intent.pauseLongitudinal or latest.pauseLongitudinal,
-                       lateralArmed=intent.lateralArmed and latest.lateralArmed,
-                       optionalSetRelease=intent.optionalSetRelease and latest.optionalSetRelease)
+      intent = restrict_intent(intent, latest)
+    intent = replace(intent, madsButtonsConsistent=intent.madsButtonsConsistent and self.mads_profile_consistent)
     if projection is None:
       # Save only after every ordinary fresh pair/latest/SM guard succeeded.
       self.verified_sm_projection = (sm_sample[0], sm_sample[2], self.integrity_epoch, self.session)

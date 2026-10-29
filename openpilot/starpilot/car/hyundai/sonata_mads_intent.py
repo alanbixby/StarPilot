@@ -8,7 +8,7 @@ ButtonType = CarState.ButtonEvent.Type
 
 class SonataMadsCardIntent(ClassicLongCardIntent):
   def __init__(self, cp, settings):
-    super().__init__(cp, effective_settings(cp, settings))
+    super().__init__(cp, effective_settings(cp, settings, mads_buttons=True))
     self.main_available = False
 
   def update(self, CS, **kwargs):

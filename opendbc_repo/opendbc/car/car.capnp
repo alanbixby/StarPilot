@@ -346,14 +346,6 @@ struct CarControl {
   latActive @11: Bool;
   longActive @12: Bool;
 
-  lateralDisplay @19 :LateralDisplay;
-  # Display-only MADS facts for factory cluster icons. Never actuation authority.
-  struct LateralDisplay {
-    valid @0 :Bool;      # enabled is from a fresh, joined intent source this frame
-    available @1 :Bool;  # qualified profile/master selected at startup
-    enabled @2 :Bool;    # retained/armed intent; false whenever !valid
-  }
-
   # Final actuator commands
   actuators @6 :Actuators;
 
@@ -479,7 +471,6 @@ struct CarParams {
   pcmCruise @3 :Bool;        # is openpilot's state tied to the PCM's cruise state?
   flags @64 :UInt32;         # flags for car specific quirks
   alphaLongitudinalAvailable @71 :Bool;
-  sonataMadsButtons @78 :Bool; # Startup-captured, Sonata classic OP-long only.
 
   minEnableSpeed @7 :Float32;
   minSteerSpeed @8 :Float32;

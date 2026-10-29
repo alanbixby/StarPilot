@@ -19,7 +19,7 @@ class SonataMadsFeature:
     if not eligible(cp):
       return None
     return (str(cp.carFingerprint), str(cp.brand), int(cp.flags), bool(cp.openpilotLongitudinalControl),
-            bool(cp.pcmCruise), int(cp.alternativeExperience), bool(cp.sonataMadsButtons),
+            bool(cp.pcmCruise), int(cp.alternativeExperience),
             tuple((str(config.safetyModel), int(config.safetyParam)) for config in cp.safetyConfigs))
 
   def selected(self):

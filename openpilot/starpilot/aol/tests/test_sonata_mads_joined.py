@@ -24,7 +24,6 @@ from openpilot.starpilot.aol.intent import AOL_TOGGLE
 from openpilot.starpilot.aol.runtime import current_native
 from openpilot.starpilot.aol.wire import PandaSlot, SafetyState, encode_safety
 from openpilot.starpilot.car.hyundai.classic_long_intent import ClassicLongCardIntent
-from openpilot.starpilot.car.hyundai.sonata_mads import prepare
 
 disable_ecu_module = importlib.import_module('opendbc.car.disable_ecu')
 
@@ -67,7 +66,7 @@ def test_mads_buttons_join_parser_card_standard_state_controls_and_native(monkey
     try:
       saved.put_bool('AlphaLongitudinalEnabled', True, block=True)
       saved.put_bool('IsReleaseBranch', False, block=True)
-      cp = prepare(classic_params(identity, lda=True), saved)
+      cp = classic_params(identity, lda=True)
       assert qualified_classic(cp) and not cp.pcmCruise and cp.openpilotLongitudinalControl
       assert cp.lateralTuning.which() == 'torque' and CarInterface.startup_required(cp)
       card = prepared_classic_card(cp)
@@ -79,7 +78,8 @@ def test_mads_buttons_join_parser_card_standard_state_controls_and_native(monkey
       card.CI.update([])
       sd, controls, drive = case._authority_callers(False, cp=card.CP.as_reader().as_builder(), genuine_events=True)
 
-      sd.aol_settings = card.aol_settings
+      assert sd.aol_settings is not card.aol_settings
+      assert sd.sonata_mads_buttons == card.sonata_mads_buttons
       assert sd.aol_settings.lkas_action == AOL_TOGGLE and sd.aol_settings.main_action == 0
       assert sd.CP.to_dict() == card.CP.to_dict() == controls.CP.to_dict()
       assert len(card.CP.safetyConfigs) == 1 and bool(card.CP.openpilotLongitudinalControl) == shared_long
@@ -97,6 +97,12 @@ def test_mads_buttons_join_parser_card_standard_state_controls_and_native(monkey
       local = patch_scope.__enter__()
       try:
         diagnostic_requests = []
+        applied_display = [None]
+        original_apply = card.CI.apply
+        def observed_apply(command, stamp, **kwargs):
+          applied_display[0] = card.CI.CC.lateral_display
+          return original_apply(command, stamp, **kwargs)
+        local.setattr(card.CI, 'apply', observed_apply)
 
         def diagnostic_query(sender, receiver, bus, addresses, requests, responses):
           assert bus == 0 and addresses == [(0x7d0, None)]
@@ -255,9 +261,9 @@ def test_mads_buttons_join_parser_card_standard_state_controls_and_native(monkey
           assert axis.longitudinalActive == command.longActive == long, (
             axis.to_dict(), sd.events.names, native.get_controls_allowed(), card.v_cruise_helper.v_cruise_kph)
           assert host.enabled == (long if enabled is None else enabled)
-          assert command.lateralDisplay.available
-          assert command.lateralDisplay.valid
-          assert command.lateralDisplay.enabled == card.aol_card_intent.allowed_latch
+          assert applied_display[0].available
+          assert applied_display[0].valid
+          assert applied_display[0].enabled == card.aol_card_intent.allowed_latch
           return result
 
         def main_press():
@@ -312,7 +318,7 @@ def test_mads_buttons_join_parser_card_standard_state_controls_and_native(monkey
         # An ambiguous event/source join must conservatively disarm instead.
         settle(3)
         result = settle(20, steer_fault=True)
-        assert not result[3].latActive and result[3].lateralDisplay.enabled, (
+        assert not result[3].latActive and applied_display[0].enabled, (
           card.aol_card_intent.latch_clear_reason, sd.events.names, sd.aol_fault_reason,
           protocol.heartbeat, native.aol_get_permission_mask())
         assert card.aol_card_intent.allowed_latch
@@ -324,7 +330,9 @@ def test_mads_buttons_join_parser_card_standard_state_controls_and_native(monkey
         assert native_counts['nonzero'] > 0 and native_counts['lateral_only_nonzero'] > 0
         now[0] += 40_000_000
         stale, _ = controls.state_control()
-        assert stale.lateralDisplay.available and not stale.lateralDisplay.valid and not stale.lateralDisplay.enabled
+        display = card.sonata_mads_display.snapshot(card.sm, now_ns=now[0], producer=card.slc_producer_session,
+          session=card.aol_axis_session(), context=card.sonata_display_context(), source_healthy=True)
+        assert display.available and not display.valid and not display.enabled
         assert not stale.latActive and not stale.longActive
         assert card._classic_startup_requests == (b'\x10\x03', b'\x28\x83\x01')
       finally:

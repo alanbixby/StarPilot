@@ -71,6 +71,7 @@ class CarState(CarStateBase):
                          if long_buttons_qualified(CP) else None)
     from opendbc.car.hyundai.sonata_mads import eligible as sonata_mads_eligible, SonataMainButtons
     self.sonata_main = SonataMainButtons() if sonata_mads_eligible(CP) else None
+    self.sonata_mads_buttons = False
     self.pe_long = pe_long_qualified(CP)
     self.pe_ready = PEReadySource() if self.pe_long or ev9_long_qualified(CP) else None
     self.ev9_long = ev9_long_qualified(CP) or self.pe_long
@@ -365,8 +366,7 @@ class CarState(CarStateBase):
       self.ev6_aol_samples = tuple((main, 0, cruise) for main, cruise in zip(
         values['CF_Clu_CruiseSwMain'], values['CF_Clu_CruiseSwState'], strict=True))
 
-    from opendbc.car.hyundai.sonata_mads import configured as sonata_mads_configured
-    if self.sonata_main is not None and sonata_mads_configured(self.CP):
+    if self.sonata_main is not None and self.sonata_mads_buttons:
       self.long_buttons = self.sonata_main
       values = cp.vl_all['CLU11']
       self.sonata_main.observe_current(((main, False, cruise) for main, cruise in zip(

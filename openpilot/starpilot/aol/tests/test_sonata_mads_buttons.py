@@ -8,13 +8,11 @@ from openpilot.starpilot.aol.intent import AolSettings
 from openpilot.starpilot.aol.tests.test_classic_long_profiles import params
 from opendbc.car.hyundai.tests.test_sonata_alpha_implicit import classic_frames
 from openpilot.starpilot.car.hyundai.aol import create_intent
+from openpilot.starpilot.car.hyundai.sonata_mads import effective_settings
 
 
 def profile_cp():
   cp = params(CAR.HYUNDAI_SONATA_HYBRID, lda=True)
-  # Keep the behavioral reproduction runnable on the pre-profile baseline.
-  if 'sonataMadsButtons' in cp.schema.fields:
-    cp.sonataMadsButtons = True
   cp.safetyConfigs[0].safetyParam = 0xC06
   cp.alternativeExperience = 32
   return cp
@@ -23,7 +21,8 @@ def profile_cp():
 def test_parser_main_lifecycle_is_independent_of_tcs_health(monkeypatch):
   cp = profile_cp()
   ci = CarInterface(cp)
-  intent = create_intent(cp, AolSettings(True, 0., 0, 0, (0, 0, 0), (0, 0, 0)))
+  ci.CS.sonata_mads_buttons = True
+  intent = create_intent(cp, effective_settings(cp, AolSettings(True, 0., 0, 0, (0, 0, 0), (0, 0, 0)), mads_buttons=True))
   tick = 0
 
   def step(main=0, lkas=0, button=0):
@@ -59,8 +58,7 @@ def test_parser_main_lifecycle_is_independent_of_tcs_health(monkeypatch):
 
 def test_opt_in_is_exact_scoped_and_preserves_saved_choices(tmp_path):
   from openpilot.common.params import Params
-  from openpilot.starpilot.car.hyundai.sonata_mads import prepare, effective_settings
-  from opendbc.car.hyundai.sonata_mads import configured
+  from openpilot.starpilot.car.hyundai.sonata_mads import capture
 
   saved = Params(str(tmp_path))
   original = AolSettings(True, 10., 8, 9, (1, 5, 6), (8, 8, 8))
@@ -68,22 +66,23 @@ def test_opt_in_is_exact_scoped_and_preserves_saved_choices(tmp_path):
   for raw in (None, b'0', b'garbage', b'1\n'):
     if raw is not None:
       Path(saved.get_param_path('SonataMadsButtons')).write_bytes(raw)
-    assert not configured(prepare(cp, saved))
+    assert not capture(cp, saved)
     assert effective_settings(cp, original) is original
   saved.put_bool('SonataMadsButtons', True, block=True)
-  assert configured(prepare(cp, saved))
-  settings = effective_settings(cp, original)
+  assert capture(cp, saved)
+  settings = effective_settings(cp, original, mads_buttons=capture(cp, saved))
   assert settings.lkas_action == 9 and settings.main_action == 0 and settings.cancel_actions == (0, 0, 0)
   assert settings.pause_brake_mps == 0. and settings.distance_actions == original.distance_actions
   assert original.lkas_action == 8 and original.pause_brake_mps == 10.
   for other in (params(CAR.HYUNDAI_SONATA, lda=True), params(CAR.HYUNDAI_SONATA_HYBRID, lda=False),
                 params(CAR.HYUNDAI_SONATA_HYBRID, lda=True, release=True)):
-    assert not configured(prepare(other, saved))
+    assert not capture(other, saved)
 
 
 def test_held_main_at_startup_and_recovery_requires_neutral_then_new_press(monkeypatch):
   cp = profile_cp()
   ci = CarInterface(cp)
+  ci.CS.sonata_mads_buttons = True
   tick = 0
 
   def step(main=0, *, omit=False):

@@ -6,7 +6,7 @@ cannot be required before the host sends its first desired-axis request.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from opendbc.car.structs import car
 from openpilot.starpilot.aol.panda_faults import blocking_fault_mask
@@ -55,7 +55,8 @@ def current_intent(sm, *, car_state_ns: int, now_ns: int, previous: IntentState 
       int(sm.logMonoTime[INTENT_SERVICE]) == intent.carStateLogMonoTime and
       intent.observedMonoTime <= now_ns <= intent.validUntilMonoTime and
       now_ns - intent.observedMonoTime <= INTENT_MAX_AGE_NS):
-    intent = previous
+    intent = replace(previous, madsButtonsConsistent=bool(previous.madsButtonsConsistent and intent.madsButtonsConsistent and
+                                                         previous.madsButtons == intent.madsButtons))
     message_ns = int(previous.carStateLogMonoTime)
   else:
     message_ns = int(sm.logMonoTime[INTENT_SERVICE])

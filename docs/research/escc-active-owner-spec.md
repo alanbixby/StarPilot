@@ -6,10 +6,9 @@ Baseline: StarPilot `ccdddea522ebc36d7caf4f40f0115c60459783af`. Target: classic 
 mixed topologies are out of scope.
 
 This document says what an ESCC owner must do before Dom may send host longitudinal commands
-on a car with an inline ESCC interceptor. It also records why that is not yet safe to build. It
-builds on the earlier scope report (`scope/escc-integration`,
-`docs/research/escc-integration-plan.md`) and the passive decoder contract
-(`docs/research/escc-passive-decoding.md`, passive ESCC lane).
+on a car with an inline ESCC interceptor. It also records why active control remains
+unqualified. The passive decoder contract in `docs/research/escc-passive-decoding.md` supplies
+offline packet handling; it grants no startup or actuation authority.
 
 ## 1. Current behavior on an ESCC installation
 
@@ -50,7 +49,8 @@ The tripwires exist so that this behavior change has to be deliberately reclassi
 
 ## 2. Interceptor identity (dated evidence, conditional)
 
-Source: `~/.t3-nightly/scratch/2026-10-18-what-is-the-stable-working-9e97075e/escc-review/`
+Local-only development record, not included in this repository:
+`~/.t3-nightly/scratch/2026-10-18-what-is-the-stable-working-9e97075e/escc-review/`
 (`manifest.json`, `branch-comparison.html`, `flashes/*/after.json`). The record was made on
 **2026-10-18**. It is not a current read, and no device was contacted for this work.
 

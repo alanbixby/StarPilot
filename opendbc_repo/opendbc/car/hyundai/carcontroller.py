@@ -25,6 +25,7 @@ from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.ray_pedal import create_ray_pedal_command, ray_pedal_gas, ray_pedal_enabled
 from opendbc.car.hyundai.ioniq6_longitudinal import Ioniq6LongitudinalPolicy
 from opendbc.car.hyundai.canfd_dash_icons import CanFDDashIcons
+from opendbc.car.hyundai.lateral_display import LateralDisplay
 from opendbc.car.hyundai.classic_scc_aol import qualified as qualified_classic_stock_aol
 from opendbc.car.hyundai.classic_long_aol import independent_buttons_qualified as qualified_classic_long_buttons
 from opendbc.car.hyundai.canfd_stock_aol import qualified as qualified_canfd_stock_aol
@@ -78,6 +79,14 @@ def angle_torque_reduction_gain(steering_torque, v_ego, lat_active, last_gain):
 def classic_aol_dash_enabled(cp):
   return bool(cp.carFingerprint != CAR.KIA_RAY_EV and (qualified_classic_stock_aol(cp, marked_only=True) or
     cp.carFingerprint == CAR.HYUNDAI_ELANTRA_2021 and qualified_classic_long_buttons(cp, marked_only=True)))
+
+
+def mads_dash_icons(icons, frame, lat_active, display):
+  # Deployed sunnypilot MADS: icons follow final latActive, with a white wheel while armed intent is retained.
+  lateral = icons.update(frame, False, lat_active)
+  if not display.available:
+    return None, None
+  return lateral or 1, lateral or int(display.valid and display.enabled)
 
 
 def process_hud_alert(enabled, fingerprint, hud_control):
@@ -161,6 +170,9 @@ class CarController(CarControllerBase):
     self.canfd_dash_icons = CanFDDashIcons() if ioniq6_status or self.torque_ev_scc_enabled or self.ev6_aol_status else None
     self.classic_dash_icons = CanFDDashIcons() if classic_aol_dash_enabled(CP) else None
     self.classic_lfa_icon = None
+    self.mads_dash_icons = CanFDDashIcons() if CP.carFingerprint == CAR.HYUNDAI_SONATA_HYBRID else None
+    self.mads_lkas_icon = self.mads_lfa_icon = None
+    self.lateral_display = LateralDisplay()  # set by Card before each update
     self.ioniq6_bsm_counter = 0
     self.ioniq6_bsm_last_can_ns = 0
     self._ray_pedal = ray_pedal_enabled(CP)
@@ -191,6 +203,11 @@ class CarController(CarControllerBase):
       self.classic_dash_icons = CanFDDashIcons()
     if self.classic_dash_icons is not None:
       self.classic_lfa_icon = self.classic_dash_icons.update(self.frame, CC.enabled, CC.latActive)
+    if self.mads_dash_icons is not None:
+      display = self.lateral_display
+      # Consumed once: a frame Card does not refresh cannot show retained intent.
+      self.lateral_display = LateralDisplay(available=display.available)
+      self.mads_lkas_icon, self.mads_lfa_icon = mads_dash_icons(self.mads_dash_icons, self.frame, CC.latActive, display)
     if self.CP.carFingerprint == CAR.KIA_RAY_EV:
       if CC.latActive:
         self._ray_disengage_frame = None
@@ -342,7 +359,8 @@ class CarController(CarControllerBase):
                                               hud_control.leftLaneVisible, hud_control.rightLaneVisible,
                                               left_lane_warning, right_lane_warning,
                                               ray_lka_icon=(self._ray_lfa_icon or 1) if self.CP.carFingerprint == CAR.KIA_RAY_EV else None,
-                                              aol_lka_icon=(self.classic_lfa_icon or 1) if self.classic_lfa_icon is not None else None))
+                                              aol_lka_icon=self.mads_lkas_icon if self.mads_lkas_icon is not None else
+                                                (self.classic_lfa_icon or 1) if self.classic_lfa_icon is not None else None))
     if _projection is not None and can_sends:
       if not is_blended(self.CP) and (self.CP.carFingerprint != CAR.KIA_RAY_EV or self._ray_lkas11_active):
         _projection.emit('hyundai.LKAS11', apply_torque, apply_steer_req, can_sends[-1])
@@ -391,7 +409,8 @@ class CarController(CarControllerBase):
         lfa_icon = 2 if CC.enabled or CC.latActive else 3 if disengaging else 0
         can_sends.append(hyundaican.create_blended_lfahda(self.packer, self.CAN, self.frame, lfa_icon))
       else:
-        can_sends.append(hyundaican.create_lfahda_mfc(self.packer, CC.enabled, lfa_icon=self.classic_lfa_icon))
+        lfa_icon = self.mads_lfa_icon if self.mads_lfa_icon is not None else self.classic_lfa_icon
+        can_sends.append(hyundaican.create_lfahda_mfc(self.packer, CC.enabled, lfa_icon=lfa_icon))
 
     # 5 Hz ACC options
     if self.frame % 20 == 0 and self.CP.openpilotLongitudinalControl and not self._ray_pedal and self.blended_longitudinal is None:

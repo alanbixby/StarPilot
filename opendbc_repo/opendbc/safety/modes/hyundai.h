@@ -587,17 +587,41 @@ static void hyundai_classic_scc_aol_rx_config(safety_config *config, bool legacy
   }
 }
 
+#define HYUNDAI_LONG_RX_COMMON_BASE 1
+#define HYUNDAI_LONG_RX_COMMON_COUNT 5
+
+// Fixed overlapping windows: BCM + common, common alone, or common + FCEV.
+// Unselected physical sources must never participate in required RX health.
 static RxCheck hyundai_long_rx_checks[] = {
+  // Sunnypilot 0b2c431d3abab630df0a32f53236944855a91aa3 requires BCM at
+  // 50 Hz for HAS_LDA. CLU13 remains gesture evidence, not health RX.
+  {.msg = {{0x391, 0, 8, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, {0}, {0}}},
   HYUNDAI_COMMON_RX_CHECKS(false)
+  HYUNDAI_FCEV_GAS_ADDR_CHECK
 };
 
 static void hyundai_long_rx_variant(bool legacy) {
-  hyundai_long_rx_checks[1].msg[0].ignore_checksum = legacy;
-  hyundai_long_rx_checks[1].msg[0].ignore_counter = legacy;
-  hyundai_long_rx_checks[1].msg[0].max_counter = legacy ? 0U : 15U;
-  hyundai_long_rx_checks[2].msg[0].ignore_checksum = legacy;
-  hyundai_long_rx_checks[2].msg[0].ignore_counter = legacy;
-  hyundai_long_rx_checks[2].msg[0].max_counter = legacy ? 0U : 7U;
+  hyundai_long_rx_checks[HYUNDAI_LONG_RX_COMMON_BASE + 1].msg[0].ignore_checksum = legacy;
+  hyundai_long_rx_checks[HYUNDAI_LONG_RX_COMMON_BASE + 1].msg[0].ignore_counter = legacy;
+  hyundai_long_rx_checks[HYUNDAI_LONG_RX_COMMON_BASE + 1].msg[0].max_counter = legacy ? 0U : 15U;
+  hyundai_long_rx_checks[HYUNDAI_LONG_RX_COMMON_BASE + 2].msg[0].ignore_checksum = legacy;
+  hyundai_long_rx_checks[HYUNDAI_LONG_RX_COMMON_BASE + 2].msg[0].ignore_counter = legacy;
+  hyundai_long_rx_checks[HYUNDAI_LONG_RX_COMMON_BASE + 2].msg[0].max_counter = legacy ? 0U : 7U;
+}
+
+static void hyundai_long_rx_config(safety_config *config, bool legacy) {
+  if (!legacy && classic_long_aol_bcm_required()) {
+    config->rx_checks = &hyundai_long_rx_checks[0];
+    config->rx_checks_len = HYUNDAI_LONG_RX_COMMON_COUNT + 1;
+  } else if (!legacy && hyundai_fcev_gas_signal) {
+    config->rx_checks = &hyundai_long_rx_checks[HYUNDAI_LONG_RX_COMMON_BASE];
+    config->rx_checks_len = HYUNDAI_LONG_RX_COMMON_COUNT + 1;
+  } else {
+    // Legacy E900 words do not select FCEV despite their literal 0x100 bit.
+    config->rx_checks = &hyundai_long_rx_checks[HYUNDAI_LONG_RX_COMMON_BASE];
+    config->rx_checks_len = HYUNDAI_LONG_RX_COMMON_COUNT;
+  }
+  config->disable_forwarding = false;
 }
 
 #ifdef ALLOW_DEBUG
@@ -769,25 +793,7 @@ static safety_config hyundai_init(uint16_t param) {
   } else if (hyundai_longitudinal) {
     // Use CLU11 (buttons) to manage controls allowed instead of SCC cruise state
 
-    static RxCheck hyundai_hev_lda_long_aol_rx_checks[] = {
-      HYUNDAI_COMMON_RX_CHECKS(false)
-      // Sunnypilot 0b2c431d3abab630df0a32f53236944855a91aa3 requires BCM at
-      // 50 Hz for HAS_LDA. CLU13 remains gesture evidence, not health RX.
-      {.msg = {{0x391, 0, 8, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, {0}, {0}}},
-    };
-
-    static RxCheck hyundai_fcev_long_rx_checks[] = {
-      HYUNDAI_COMMON_RX_CHECKS(false)
-      HYUNDAI_FCEV_GAS_ADDR_CHECK
-    };
-
-    if (classic_long_aol_bcm_required()) {
-      SET_RX_CHECKS(hyundai_hev_lda_long_aol_rx_checks, ret);
-    } else if (hyundai_fcev_gas_signal) {
-      SET_RX_CHECKS(hyundai_fcev_long_rx_checks, ret);
-    } else {
-      SET_RX_CHECKS(hyundai_long_rx_checks, ret);
-    }
+    hyundai_long_rx_config(&ret, false);
     if (hyundai_camera_scc) {
       if (hyundai_can_refresh_msgs) {
         SET_TX_MSGS(HYUNDAI_CAMERA_SCC_LONG_REFRESH_TX_MSGS, ret);
@@ -965,7 +971,7 @@ static safety_config hyundai_legacy_init(uint16_t param) {
     if (legacy_long && alternative_matches) {
       hyundai_long_rx_variant(true);
       hyundai_longitudinal = true;
-      SET_RX_CHECKS(hyundai_long_rx_checks, ret);
+      hyundai_long_rx_config(&ret, true);
       SET_TX_MSGS(HYUNDAI_LONG_TX_MSGS, ret);
     }
 #endif

@@ -56,12 +56,12 @@ class SchemaPolicyTest(unittest.TestCase):
     self.assertIn(b'aolAxisState @142 :Custom.AolAxisState;', self.schemas['openpilot/cereal/log.capnp'])
     self.schemas['openpilot/cereal/custom.capnp'] = self.schemas['openpilot/cereal/custom.capnp'].replace(
       original, b'struct FixtureState @0xfc6241ed8877b611 {')
-    # AolAxisState already occupies @0..17. Append a genuinely fresh ordinal;
+    # AolAxisState already occupies @0..19. Append a genuinely fresh ordinal;
     # the parser must continue rejecting the old duplicate-@12 fixture.
-    occupied_tail = b'intentIntegrityEpoch @17 :UInt64;'
+    occupied_tail = b'displayIntentEnabled @19 :Bool;'
     self.assertIn(occupied_tail, self.schemas['openpilot/cereal/custom.capnp'])
     self.schemas['openpilot/cereal/custom.capnp'] = self.schemas['openpilot/cereal/custom.capnp'].replace(
-      occupied_tail, occupied_tail + b'\n  note @18 :Text = "{fixture}";', 1)
+      occupied_tail, occupied_tail + b'\n  note @20 :Text = "{fixture}";', 1)
     self.schemas['openpilot/cereal/log.capnp'] = self.schemas['openpilot/cereal/log.capnp'].replace(
       b'aolAxisState @142 :Custom.AolAxisState;', b'fixtureState @142 :Custom.FixtureState;')
     self.assertEqual(validate(self.schemas, self.policy, self.sync), [])

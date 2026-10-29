@@ -40,7 +40,14 @@ class TestHyundaiEsccQualification(unittest.TestCase):
   reset = fixture.TestHyundaiClassicLongAol.reset
   rx = fixture.TestHyundaiClassicLongAol.rx
   request = fixture.TestHyundaiClassicLongAol.request
-  feed = fixture.TestHyundaiClassicLongAol.feed
+
+  def feed(self, word=0x404, **kwargs):
+    if word == SONATA_HYBRID_LONG_AOL:
+      # This marked profile requires its real 50 Hz BCM source, even when
+      # engaging through CLU SET/RES. ESCC packets cannot supply that health.
+      self.safety.set_timer(self.now)
+      self.rx('BCM_PO_11', {'LDA_BTN': 0})
+    fixture.TestHyundaiClassicLongAol.feed(self, word, **kwargs)
 
   def select(self, word):
     self.reset(word, 0 if word == SONATA_HYBRID_LONG else 32)

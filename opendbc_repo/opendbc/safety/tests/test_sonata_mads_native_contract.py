@@ -2,7 +2,8 @@
 
 0xC06 / alternativeExperience=32 already selects classic OP-long, HEV gas and
 physical LDA authorization. TCS13 ACCEnable is hardware health, not the host's
-software MAIN latch. Positive acknowledgments carry actual native permissions;
+software MAIN latch. BCM 0x391 liveness is required even for a CLU13 gesture.
+Positive acknowledgments carry actual native permissions;
 controls_allowed is never forced. This is not on-car qualification.
 """
 
@@ -26,6 +27,7 @@ class SonataNative:
     self.packer = CANPackerSafety('hyundai_can_generated')
     self.source, self.signal = source
     self.now = 1_000_000
+    self.next_safety_tick = 2_000_000
     self.counter = 0
     safety.init_tests()
     safety.set_alternative_experience(experience)
@@ -55,12 +57,19 @@ class SonataNative:
       ('MDPS12', {'CR_Mdps_StrColTq': 0}, False),
       ('CLU11', {'CF_Clu_AliveCnt1': count % 16,
                  'CF_Clu_CruiseSwMain': int(main), 'CF_Clu_CruiseSwState': button}, False),
-      (self.source, {self.signal: int(lda)}, False),
+      # C06's verified required source is BCM. CLU13 can supply a physical
+      # gesture while BCM stays neutral/live; it cannot replace BCM health.
+      ('BCM_PO_11', {'LDA_BTN': int(lda and self.source == 'BCM_PO_11')}, False),
     )
+    if self.source != 'BCM_PO_11':
+      frames += ((self.source, {self.signal: int(lda)}, False),)
     for name, values, integrity in frames:
       if name != omit:
         assert self.rx(name, values, integrity=integrity,
                        bus=tcs_bus if name == 'TCS13' else 0), name
+    if self.now >= self.next_safety_tick:
+      self.safety.safety_tick()
+      self.next_safety_tick += 1_000_000
 
   def warm(self, **kwargs):
     for _ in range(6):
@@ -160,6 +169,220 @@ def test_unclaimed_lfa_expires_while_physical_health_stays_current(native):
   assert not car.steer()
   car.arm_lfa()
   assert car.steer()
+
+
+@pytest.mark.parametrize('observation', ['permission', 'lkas-tx'])
+def test_claimed_bcm_source_loss_revokes_with_other_inputs_and_requests_fresh(native, observation):
+  car = SonataNative(native)
+  car.warm()
+  car.arm_lfa()
+  assert car.steer()
+  # BCM stops after a real neutral->press. All other native required sources,
+  # heartbeat and host requests stay fresh, with the regular 1 Hz safety tick.
+  for _ in range(120):
+    car.frame(omit='BCM_PO_11')
+    native.set_aol_test_heartbeat(True)
+    native.aol_set_host_request(1)
+  if observation == 'permission':
+    assert native.aol_get_permission_mask() == 0
+  else:
+    assert not car.steer(), 'Real LKAS TX must reject a claimed token after BCM source loss'
+
+
+def test_bcm_health_allows_200ms_then_denies_before_the_next_periodic_tick(native):
+  car = SonataNative(native)
+  car.warm()
+  car.arm_lfa()
+  for _ in range(20):
+    car.frame(omit='BCM_PO_11')
+    assert car.request(1) == 1
+  assert car.steer()
+  car.frame(omit='BCM_PO_11')
+  assert car.now < car.next_safety_tick
+  assert car.request(1) == 0
+  assert not car.steer()
+
+
+def test_verified_bcm_at_50hz_keeps_lateral_health_current(native):
+  car = SonataNative(native)
+  car.warm()
+  car.arm_lfa()
+  for tick in range(100):
+    car.frame(lda=True, omit='BCM_PO_11' if tick % 2 == 0 else None)
+    assert car.request(1) == 1
+    assert car.steer()
+
+
+@pytest.mark.parametrize('combined', [False, True])
+@pytest.mark.parametrize('returned_held', [False, True])
+@pytest.mark.parametrize('poll_permission', [False, True])
+def test_first_returned_bcm_cannot_hide_gap_or_revive_either_axis(native, combined, returned_held, poll_permission):
+  car = SonataNative(native)
+  car.warm()
+  car.arm_lfa()
+  mask = 3 if combined else 1
+  if combined:
+    car.frame(button=2, lda=True)
+    car.frame(lda=True)
+  assert car.request(mask) == mask
+  assert bool(native.get_controls_allowed()) == combined
+  # All other physical sources/requests continue through the exact 200 ms
+  # boundary. The first frame after it is BCM itself, before any permission
+  # poll or periodic tick can detect the gap. Its new RX timestamp must not
+  # conceal the old source epoch, including prior SET-authorized controls.
+  for _ in range(20):
+    car.frame(omit='BCM_PO_11')
+    native.aol_set_host_request(mask)
+    if poll_permission:
+      assert native.aol_get_permission_mask() == mask
+  car.now += 1_000
+  native.set_timer(car.now)
+  assert car.rx('BCM_PO_11', {'LDA_BTN': int(returned_held)})
+  assert not native.get_controls_allowed()
+  assert car.request(mask) == 0
+  assert not car.steer()
+  assert not car.accel()
+  # A held return and a neutral return are both health evidence, not an arm.
+  for _ in range(6):
+    car.frame(lda=returned_held)
+    assert car.request(mask) == 0
+  car.arm_lfa()
+  assert car.steer()
+  assert not car.accel()
+  if combined:
+    car.frame(button=2)
+    assert not native.get_controls_allowed()
+    car.frame()
+    assert car.request(3) == 3
+    assert car.accel()
+
+
+@pytest.mark.parametrize('prior_reset', ['heartbeat', 'host-lease'])
+def test_bcm_clock_survives_a_prior_host_authorization_reset(native, prior_reset):
+  car = SonataNative(native)
+  car.warm()
+  car.arm_lfa()
+  car.frame(button=2, lda=True)
+  car.frame(lda=True)
+  assert car.request(3) == 3
+  if prior_reset == 'heartbeat':
+    native.set_aol_test_heartbeat(False)
+  else:
+    # Physical BCM remains current while only the old host lease expires.
+    for _ in range(31):
+      car.frame(lda=True)
+  assert native.aol_get_request_mask() == 0
+  native.set_aol_test_heartbeat(True)
+  assert native.get_controls_allowed(), 'Exercise the existing retained SET proof, never force it'
+  # The independent physical BCM clock must survive clearing the host's
+  # token/neutral history, or the first returning frame can hide this gap.
+  for _ in range(20):
+    car.frame(omit='BCM_PO_11')
+    native.aol_set_host_request(3)
+  car.now += 1_000
+  native.set_timer(car.now)
+  assert car.rx('BCM_PO_11', {'LDA_BTN': 1})
+  observed = (bool(native.get_controls_allowed()), car.request(3), bool(car.steer()), bool(car.accel()))
+  assert observed == (False, 0, False, False), 'A host reset cannot erase the physical BCM receive clock'
+
+
+@pytest.mark.parametrize('replacement', ['none', 'wrong-bus', 'short', 'long', 'clu-only'])
+def test_other_shapes_or_clu_cannot_renew_required_bcm(native, replacement):
+  car = SonataNative(native)
+  car.warm()
+  car.arm_lfa()
+  for _ in range(21):
+    car.frame(omit='BCM_PO_11')
+    if replacement == 'wrong-bus':
+      assert car.rx('BCM_PO_11', {'LDA_BTN': 1}, bus=1)
+    elif replacement in ('short', 'long'):
+      length = 7 if replacement == 'short' else 12
+      packet = libsafety_py.make_CANPacket(0x391, 0, b'\x10' + bytes(length - 1))
+      assert native.safety_rx_hook(packet)
+    elif replacement == 'clu-only':
+      assert car.rx('CLU13', {'CF_Clu_LdwsLkasSW': 1})
+    native.aol_set_host_request(1)
+  assert car.request(1) == 0
+  assert not native.aol_rx_healthy()
+  assert not car.steer()
+
+
+def test_clu13_only_is_not_a_required_bcm_health_substitute(native):
+  car = SonataNative(native, LDA_SOURCES[1])
+  for _ in range(6):
+    car.frame(omit='BCM_PO_11')
+  assert car.request(0) == 0
+  car.frame(lda=True, omit='BCM_PO_11')
+  assert car.request(3) == 0
+  assert not car.steer()
+  assert not car.accel()
+  # BCM returning neutral while CLU stays held does not manufacture a press.
+  car.frame(lda=True)
+  assert car.request(1) == 0
+  car.arm_lfa()
+  assert car.steer()
+
+
+@pytest.mark.parametrize('button', [1, 2])
+def test_enable_held_across_bcm_gap_requires_healthy_neutral_then_fresh_press(native, button):
+  car = SonataNative(native)
+  car.warm()
+  car.arm_lfa()
+  car.frame(button=button, lda=True)
+  car.frame(lda=True)
+  assert car.request(3) == 3
+  # An enable press started before the source was lost cannot engage again
+  # when released after BCM returns. Neither axis may reuse that session.
+  for _ in range(21):
+    car.frame(button=button, omit='BCM_PO_11')
+    native.aol_set_host_request(3)
+  assert not native.get_controls_allowed()
+  car.frame(button=button, lda=True)
+  assert car.request(3) == 0
+  car.frame(lda=True)
+  assert not native.get_controls_allowed()
+  assert car.request(3) == 0
+  car.frame(button=button, lda=True)
+  assert not native.get_controls_allowed()
+  car.frame(lda=True)
+  assert car.request(3) == 3
+  assert car.accel()
+
+
+@pytest.mark.parametrize('button', [1, 2])
+def test_set_resume_started_without_bcm_cannot_authorize_on_source_return(native, button):
+  car = SonataNative(native)
+  for _ in range(6):
+    car.frame(button=button, omit='BCM_PO_11')
+  assert car.request(3) == 0
+  assert not native.get_controls_allowed()
+  car.frame(button=button)
+  car.frame()
+  assert car.request(3) == 0
+  assert not native.get_controls_allowed()
+  car.frame(button=button)
+  car.frame()
+  assert car.request(3) == 3
+  assert car.accel()
+
+
+@pytest.mark.parametrize('word', [0x406, 0xC04, 0xC05, 0xC46])
+def test_other_classic_long_words_keep_their_existing_physical_rx_contract(native, word):
+  from opendbc.safety.tests import test_hyundai_classic_long_aol as fixture
+
+  car = fixture.TestHyundaiClassicLongAol(methodName='runTest')
+  car.setUp()
+  try:
+    car.reset(word)
+    for _ in range(6):
+      car.feed(word)
+    car.feed(word, button=2)
+    car.feed(word)
+    assert native.get_controls_allowed()
+    assert car.request(3) == 3
+    assert native.safety_tx_hook(car.packer.make_can_msg_safety('SCC12', 0, {'aReqRaw': .1, 'aReqValue': .1}))
+  finally:
+    car.tearDown()
 
 
 @pytest.mark.parametrize('button', [1, 2])  # RES / SET

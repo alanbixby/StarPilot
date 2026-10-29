@@ -299,7 +299,16 @@ static void hyundai_rx_hook(const CANPacket_t *msg) {
         }
         cruise_button_prev = cruise_button;
       } else {
-        hyundai_common_cruise_buttons_check(cruise_button, main_button, false, hyundai_long_main_policy);
+        const bool required_bcm_healthy = !classic_long_aol_bcm_required() || aol_rx_healthy();
+        if (classic_long_aol_bcm_required() && (!required_bcm_healthy || hyundai_long_rearm_blocked)) {
+          // Source recovery is not a SET/RES release. Require healthy neutral
+          // before accepting a new physical engagement gesture on this word.
+          controls_allowed = false;
+          cruise_button_prev = HYUNDAI_BTN_NONE;
+          hyundai_long_rearm_blocked = !required_bcm_healthy || main_button || (cruise_button != HYUNDAI_BTN_NONE);
+        } else {
+          hyundai_common_cruise_buttons_check(cruise_button, main_button, false, hyundai_long_main_policy);
+        }
       }
     }
 
@@ -760,12 +769,21 @@ static safety_config hyundai_init(uint16_t param) {
   } else if (hyundai_longitudinal) {
     // Use CLU11 (buttons) to manage controls allowed instead of SCC cruise state
 
+    static RxCheck hyundai_hev_lda_long_aol_rx_checks[] = {
+      HYUNDAI_COMMON_RX_CHECKS(false)
+      // Sunnypilot 0b2c431d3abab630df0a32f53236944855a91aa3 requires BCM at
+      // 50 Hz for HAS_LDA. CLU13 remains gesture evidence, not health RX.
+      {.msg = {{0x391, 0, 8, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, {0}, {0}}},
+    };
+
     static RxCheck hyundai_fcev_long_rx_checks[] = {
       HYUNDAI_COMMON_RX_CHECKS(false)
       HYUNDAI_FCEV_GAS_ADDR_CHECK
     };
 
-    if (hyundai_fcev_gas_signal) {
+    if (classic_long_aol_bcm_required()) {
+      SET_RX_CHECKS(hyundai_hev_lda_long_aol_rx_checks, ret);
+    } else if (hyundai_fcev_gas_signal) {
       SET_RX_CHECKS(hyundai_fcev_long_rx_checks, ret);
     } else {
       SET_RX_CHECKS(hyundai_long_rx_checks, ret);

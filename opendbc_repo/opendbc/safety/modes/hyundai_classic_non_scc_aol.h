@@ -18,6 +18,8 @@ static bool classic_scc_aol_camera = false;
 static bool classic_long_aol_enabled = false;
 static bool classic_long_main_neutral = false;
 static bool classic_long_main_pressed = false;
+static bool classic_long_aol_bcm_seen = false;
+static uint32_t classic_long_aol_bcm_ts = 0U;
 static bool classic_scc_main_source_seen = false;
 static uint32_t classic_scc_main_source_ts = 0U;
 
@@ -59,6 +61,12 @@ static bool classic_non_scc_aol_session = false;
 static bool classic_non_scc_aol_request_seen = false;
 static uint32_t classic_non_scc_aol_request_ts = 0U;
 
+static bool classic_long_aol_bcm_required(void) {
+  // Existing HEV/LDA/OP-long word. It is shared by platforms, so all users
+  // of this exact word must provide the verified bus-0 BCM physical source.
+  return classic_long_aol_enabled && (current_safety_param == 0xC06U);
+}
+
 static void classic_non_scc_aol_clear_authorization(void) {
   classic_non_scc_aol_main = false;
   classic_non_scc_aol_main_seen = false;
@@ -81,8 +89,17 @@ static void classic_non_scc_aol_clear_authorization(void) {
   aol_host_axis_mask = 0U;
 }
 
+static void classic_long_aol_bcm_withdraw(void) {
+  controls_allowed = false;
+  cruise_button_prev = HYUNDAI_BTN_NONE;
+  hyundai_long_rearm_blocked = true;
+  classic_non_scc_aol_clear_authorization();
+}
+
 static void classic_non_scc_aol_reset(void) {
   classic_non_scc_aol_clear_authorization();
+  classic_long_aol_bcm_seen = false;
+  classic_long_aol_bcm_ts = 0U;
   classic_non_scc_aol_enabled = false;
   classic_scc_aol_enabled = false;
   classic_scc_aol_camera = false;
@@ -137,7 +154,11 @@ static uint8_t classic_non_scc_aol_request_mask(void) {
 static uint8_t classic_non_scc_aol_permission_mask(void) {
   uint8_t result = 0U;
   if (!aol_rx_healthy()) {
-    classic_non_scc_aol_clear_authorization();
+    if (classic_long_aol_bcm_required()) {
+      classic_long_aol_bcm_withdraw();
+    } else {
+      classic_non_scc_aol_clear_authorization();
+    }
   } else {
     const uint8_t request = classic_non_scc_aol_request_mask();
     const bool physical_authorized = (classic_long_aol_enabled || (classic_scc_aol_enabled && classic_non_scc_aol_lda)) ?
@@ -162,8 +183,22 @@ static bool classic_non_scc_aol_combined_pressed(uint32_t now) {
 }
 
 static void classic_non_scc_aol_rx(const CANPacket_t *msg) {
+  // RX bookkeeping has already stamped an incoming required BCM frame. Its
+  // previous physical-source timestamp must still veto an expired epoch.
+  // At the required 50 Hz this matches aol_rx_healthy's ten-sample / 200 ms
+  // lease, including gaps shorter than the generic 1 Hz lag check can see.
+  // This receive clock survives host-token/heartbeat resets. Such a reset
+  // cannot erase a subsequent physical-source outage while SET proof remains.
+  if (classic_long_aol_bcm_required() && classic_long_aol_bcm_seen &&
+      (safety_get_ts_elapsed(microsecond_timer_get(), classic_long_aol_bcm_ts) > 200000U)) {
+    classic_long_aol_bcm_withdraw();
+  }
   if (classic_non_scc_aol_enabled && ((msg->bus == 0U) || (classic_scc_aol_enabled && classic_scc_aol_camera && (msg->bus == 2U)))) {
     const uint32_t now = microsecond_timer_get();
+    if (classic_long_aol_bcm_required() && (msg->bus == 0U) && (msg->addr == 0x391U) && (GET_LEN(msg) == 8U)) {
+      classic_long_aol_bcm_seen = true;
+      classic_long_aol_bcm_ts = now;
+    }
     const uint8_t scc_bus = classic_scc_aol_camera ? 2U : 0U;
     if (classic_long_aol_enabled && (msg->bus == 0U) && (msg->addr == 0x394U) && (GET_LEN(msg) == 8U)) {
       classic_non_scc_aol_main = ((msg->data[5] >> 3U) & 3U) == 0U;

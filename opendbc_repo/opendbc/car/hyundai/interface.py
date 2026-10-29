@@ -21,6 +21,7 @@ Ecu = structs.CarParams.Ecu
 # Cancel button can sometimes be ACC pause/resume button, main button can also enable on some cars
 ENABLE_BUTTONS = (ButtonType.accelCruise, ButtonType.decelCruise, ButtonType.cancel, ButtonType.mainCruise)
 KONA_NON_SCC_FCA_RADAR_ADDR = 0x602
+ESCC_ADDR, ESCC_BUS = 0x2AB, 0  # legacy ESCC interceptor broadcast on the powertrain bus
 
 
 def detect_kona_non_scc_radar_fca(candidate, fingerprint, car_fw) -> bool:
@@ -375,6 +376,15 @@ class CarInterface(CarInterfaceBase):
       ret.dashcamOnly = True
 
     if candidate == CAR.KIA_EV6_2025 and ret.flags & (HyundaiFlags.CANFD_LKA_STEER_MSG | HyundaiFlags.HYBRID):
+      ret.dashcamOnly = True
+      ret.safetyConfigs = [get_safety_config(structs.CarParams.SafetyModel.noOutput)]
+
+    # An inline ESCC interceptor has no qualified owner; the ordinary LONG startup
+    # would disable its radar. Positive presence vetoes all output before any
+    # startup owner exists. A missing or late 0x2AB proves nothing.
+    if candidate == CAR.HYUNDAI_SONATA_HYBRID and ret.openpilotLongitudinalControl and ESCC_ADDR in fingerprint[ESCC_BUS]:
+      ret.openpilotLongitudinalControl = False
+      ret.pcmCruise = True
       ret.dashcamOnly = True
       ret.safetyConfigs = [get_safety_config(structs.CarParams.SafetyModel.noOutput)]
 

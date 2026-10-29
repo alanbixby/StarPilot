@@ -1,6 +1,7 @@
 # ESCC active-owner specification: classic 2023 Sonata Hybrid
 
-Status: **specification and qualification harness only. Active ESCC control is not implemented.**
+Status: **specification, qualification harness and a present/unqualified dashcam guard. Active
+ESCC control is not implemented.**
 Baseline: StarPilot `ccdddea522ebc36d7caf4f40f0115c60459783af`. Target: classic CAN
 `HYUNDAI_SONATA_HYBRID` (Sonata Hybrid 2020–23) only. CAN-FD, Palisade, non-SCC, legacy and
 mixed topologies are out of scope.
@@ -12,16 +13,20 @@ offline packet handling; it grants no startup or actuation authority.
 
 ## 1. Current behavior on an ESCC installation
 
-Dom has no ESCC path. `opendbc/car/hyundai/tests/test_escc_active_qualification.py` exercises
-the current public interfaces and records the following facts. **None of them shows that
-unmodified Dom is safe with the interceptor installed.**
+Dom has no ESCC control path. It has one present/unqualified guard (§4).
+`opendbc/car/hyundai/tests/test_escc_active_qualification.py` exercises the public interfaces
+and `openpilot/starpilot/tests/test_escc_present_guard.py` drives the actual `Car` constructor.
+Together they record the following facts. **None of them shows that Dom is safe to drive
+with the interceptor installed.**
 
 | Fact (tested) | Consequence on an ESCC car |
 | --- | --- |
-| `CarInterface.get_params` returns identical CarParams with or without `0x2AB`/DLC 8 on bus 0. The word stays the ordinary LONG `0x0006`. | Dom cannot tell that the interceptor is installed. |
-| With alpha long, `startup_owner` selects `OrdinaryClassicStartup` at `0x7D0` bus 0. `CarInterface.init` sends `28 83 01` (disable RX/TX) to `0x7D0`. | The code attempts to disable radar communication. Firmware `30cdcd9c` suggests that the interceptor forwards this traffic, but acceptance on the installed ECU and resulting FCA/AEB behavior are not bench-verified. This creates a stock FCA/AEB risk, not a measured physical outcome. |
-| With alpha long, `hyundaican.create_acc_opt` sends a host `FCA12` with `FCA_USM=1` ("AEB disabled") on bus 0. | If the radar were left alive, this frame would compete with the stock FCA12 that the interceptor forwards. |
-| With alpha long off (stock ACC), whether a release or development build: no startup owner, and `init` sends no radar disable. | This inspected path avoids host radar-disable traffic. It does not establish that the interceptor's physical fallback, stock ACC, or stock FCA behavior is qualified. |
+| Guard: for exactly `HYUNDAI_SONATA_HYBRID`, when alpha long would be selected and `0x2AB` (any DLC) is in the bus 0 fingerprint, `CarInterface.get_params` returns `dashcamOnly`, `openpilotLongitudinalControl=False`, `pcmCruise=True` and a single `noOutput` safety config. `alphaLongitudinalAvailable` stays set so the unsupported request remains visible. | No LONG word, startup owner or controller output is authorized. The car is dashcam/no-output; this is not an automatic stock-ACC fallback. |
+| Guarded CP: `startup_required` is false and `startup_owner(..., requested=True)` returns `None`, including the final blended fallthrough. `CarInterface.init` sends no radar disable. Through the actual `Car` constructor, the factory sees only the guarded CP, no `10 03`/`28 83 01`/keeper/DID request or frame is sent, the published CP is passive `noOutput`, `Card.step` never reaches the controller, and a saved MADS choice qualifies no AOL profile. | The radar-disable path is not reachable when `0x2AB` is seen while fingerprinting. Existing startup NoControl/dashcam reporting applies; no new event or toggle exists. |
+| Detection limit: without `0x2AB` the ordinary LONG path is unchanged. `startup_owner` selects `OrdinaryClassicStartup` at `0x7D0` bus 0 and `CarInterface.init` sends `28 83 01` (disable RX/TX) to `0x7D0`. | A missed or late interceptor still gets the radar-disable attempt. Firmware `30cdcd9c` suggests that the interceptor forwards this traffic, but acceptance on the installed ECU and resulting FCA/AEB behavior are not bench-verified. This remains a stock FCA/AEB risk, not a measured physical outcome. |
+| The ordinary LONG `hyundaican.create_acc_opt` builder still emits a host `FCA12` with `FCA_USM=1` ("AEB disabled") on bus 0. The guarded CP never reaches it through `Card`. | Only reachable on the unguarded (missed-detection) path, where it would compete with the stock FCA12 that the interceptor forwards. |
+| With alpha long off (stock ACC), release or development: CarParams are identical with or without `0x2AB` (also with MADS requested); no startup owner, and `init` sends no radar disable. | The guard leaves this path unchanged. It does not establish that the interceptor's physical fallback, stock ACC, stock FCA or MADS behavior is qualified. |
+| `0x2AB` on bus 1 or 2, other candidates (`HYUNDAI_SONATA`, `HYUNDAI_ELANTRA_HEV_2021`, `HYUNDAI_PALISADE`) and alpha long off: CarParams unchanged. | The guard is scoped to the exact classic Sonata Hybrid alpha-long selection. |
 | No `SafetyModel` can carry ESCC (`@40` is unassigned). The donor `ESCC=1` bit is `EV_GAS` in Dom and is rejected by `native_accepts`. | Activation cannot be negotiated by accident. |
 
 Native counterpart: `opendbc/safety/tests/test_hyundai_escc_qualification.py` (real libsafety).
@@ -42,10 +47,11 @@ word `0xC06`; it never forces `controls_allowed`. It then shows:
 
 Mutation checks were run once and the changes reverted:
 - Weakening the native `aeb_req` rejection makes the emergency and donor tests fail.
-- Adding a naive "withhold LONG when `0x2AB` is present" guard trips the two current-path
-  tripwires.
+- Removing the present/unqualified guard fails the guarded-profile, owner, any-DLC and actual
+  `Car` tests, while the scope and unchanged-path tests still pass.
 
-The tripwires exist so that this behavior change has to be deliberately reclassified.
+The tripwires exist so that any later change to this behavior has to be deliberately
+reclassified.
 
 ## 2. Interceptor identity (dated evidence, conditional)
 
@@ -89,7 +95,7 @@ runtime proof.
 
 | State | Entry condition | Host actions |
 | --- | --- | --- |
-| Absent | No valid `0x2AB` (standard ID, bus 0, DLC 8) seen during fingerprinting | Existing behavior, unchanged. |
+| Absent | No `0x2AB` on bus 0 seen during fingerprinting (the §4 guard treats any DLC as present) | Existing behavior, unchanged. |
 | Present-unqualified | `0x2AB` seen, but the installed identity or another §5 gate is unproven | Withhold ESCC longitudinal takeover and report the reason. No ESCC LONG profile, host SCC11–14/FCA12/FRT_RADAR11, or radar-disable/keeper/DID traffic may be authorized from this unqualified state. Stock-ACC fallback requires a separately validated mode-selection and handback policy. This row does not implement such a fallback. |
 | Qualified-ready | All gates pass and the passive decoder shows a fresh link (packet age only) | Dedicated ESCC profile (below). SCC takeover begins only when controls are ready. |
 | Active | Native acknowledgment of the ESCC profile, plus a physical engagement | SCC11/12/13/14 with ordinary limits. Stock FCA11/FCA12 pass through untouched. |
@@ -133,31 +139,45 @@ Old firmware that does not know model 40 already fails closed (see the native te
 
 | File | Owner today | ESCC change |
 | --- | --- | --- |
-| `car/hyundai/interface.py` | parent | ESCC presence → Present-unqualified decision; owner dispatch before ordinary classic |
+| `car/hyundai/interface.py` | parent | ESCC presence → Present-unqualified decision (dashcam veto implemented, §4); owner dispatch before ordinary classic |
 | `car/hyundai/ordinary_classic_startup.py` | parent | `required()` excludes ESCC-present CPs (one predicate) |
 | `car/hyundai/carcontroller.py`, `hyundaican.py` | HUD lane | ESCC CP: skip keeper, `create_acc_opt` FCA12 and `create_frt_radar_opt` |
 | `car/car.capnp`, `pandad.cc`, `aol_policy.h` | parent / MADS (display schema) | `hyundaiEscc @40` and its native profile |
 | `car/hyundai/escc.py`, DBC, parser tests | passive lane | consumed read-only |
 | new `escc_startup.py`, `escc_aol.py`, `safety/modes/hyundai_escc.h`, their tests | ESCC active lane | — |
 
-## 4. Deferred unsupported-configuration guard
+## 4. Present/unqualified guard
 
-An unsupported-configuration guard could withhold new host longitudinal authority before an
-ESCC active owner exists. It must be designed across factory selection, startup, controller
-output, clear user reporting, and any verified stock-ACC transition. Merely clearing
-`CP.openpilotLongitudinalControl` does not qualify physical fallback or preserve an identical
-MADS profile: stock and openpilot-longitudinal paths have different admission and behavior.
+`CarInterface._get_params` vetoes the exact classic `HYUNDAI_SONATA_HYBRID` alpha-long selection
+when `0x2AB` is in the bus 0 fingerprint at any DLC. The result is `dashcamOnly`, no openpilot
+longitudinal, `pcmCruise` and a single `noOutput` safety config. `alphaLongitudinalAvailable` is
+left as computed so the unsupported request stays visible. This is the §3 "Present-unqualified"
+row reduced to a dashcam veto.
 
-The current alpha-long path sends radar-disable commands and synthetic FCA configuration;
-those are code-derived incompatibility risks. Actual ECU acceptance and stock AEB behavior
-remain unverified. This slice implements no guard, automatic stock-ACC fallback, or active
-takeover. The parent left those changes for a separately coherent implementation after the
-necessary policy and evidence are established. Current-path tripwires must be deliberately
-reclassified when that implementation changes the expected traffic.
+Placement matters. `Card`'s `pre_create_hook` calls the startup factory before the car interface
+is constructed, and `OrdinaryClassicStartup` would send `10 03` then `28 83 01` to `0x7D0` from
+there. Withholding after controls are ready would be too late. `_get_params` sees the
+fingerprint before any startup owner is chosen. `vehicle_preferences` prepare/finalize and the
+startup factory do not restore the guarded LONG profile or an owner; the actual `Car` test checks
+this.
 
-Detection limitation: the check relies on `0x2AB` being present while fingerprinting runs. If
-the interceptor boots late, today's behavior results. A second check inside the deferred owner,
-before the disable transaction, would close that gap.
+What it does not do:
+- It implements no ESCC owner, no emergency forwarding, no native safety exception and no
+  automatic stock-ACC or hardware fallback. Nothing here verifies stock ACC with the
+  interceptor.
+- It is a positive-presence veto only. A missing or late `0x2AB` does not prove absence and does
+  not qualify the ordinary LONG path. If the interceptor boots late, the ordinary path still
+  attempts the radar disable (§1, detection limit). A second check inside a future owner, before
+  any disable transaction, would narrow that gap.
+- It does not qualify driving with the interceptor. Two distinct test modes are not active
+  control: mode A, passive logging with the openpilot toggle off; mode B, a negative check that
+  the guard engages (dashcam, no output) with alpha long requested. Neither qualifies driving nor
+  active MADS with ESCC.
+- It adds no event, toggle or parameter. The existing startup NoControl/dashcam reporting is the
+  user-visible signal.
+
+The alpha-long-off stock path is unchanged. The interceptor's physical fallback, stock ACC and
+stock FCA behavior on that path remain unqualified. §5 gates are untouched.
 
 ## 5. Gates that block activation
 
@@ -184,5 +204,9 @@ host-verification lane's runner):
 
 ```
 .host_verification/run opendbc_repo/opendbc/safety/tests/test_hyundai_escc_qualification.py \
-  opendbc_repo/opendbc/car/hyundai/tests/test_escc_active_qualification.py
+  opendbc_repo/opendbc/car/hyundai/tests/test_escc_active_qualification.py \
+  openpilot/starpilot/tests/test_escc_present_guard.py
 ```
+
+The actual-`Car` test needs the host native Params/IPC libraries (`.host_verification/run
+--build`).

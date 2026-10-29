@@ -1,0 +1,131 @@
+{
+  "provenance": {
+    "kind": "synthetic wire vectors; no captured CAN or route identifiers",
+    "source_revision": "0b2c431d3abab630df0a32f53236944855a91aa3",
+    "sources": [
+      {
+        "path": "opendbc_repo/opendbc/car/hyundai/radar_interface.py",
+        "url": "https://raw.githubusercontent.com/sunnypilot/sunnypilot/0b2c431d3abab630df0a32f53236944855a91aa3/opendbc_repo/opendbc/car/hyundai/radar_interface.py",
+        "sha256": "00d7d9a35c4bf8950742d35f5874124db4ea837776d15a5e6df37c53fd5e13b4",
+        "bytes": 2410
+      },
+      {
+        "path": "opendbc_repo/opendbc/sunnypilot/car/hyundai/escc.py",
+        "url": "https://raw.githubusercontent.com/sunnypilot/sunnypilot/0b2c431d3abab630df0a32f53236944855a91aa3/opendbc_repo/opendbc/sunnypilot/car/hyundai/escc.py",
+        "sha256": "8af8f359c04d20bb98eaf17f7d5d168941edb978f7535d86cb9a1dbdc70c4afa",
+        "bytes": 2477
+      },
+      {
+        "path": "opendbc_repo/opendbc/sunnypilot/car/hyundai/radar_interface_ext.py",
+        "url": "https://raw.githubusercontent.com/sunnypilot/sunnypilot/0b2c431d3abab630df0a32f53236944855a91aa3/opendbc_repo/opendbc/sunnypilot/car/hyundai/radar_interface_ext.py",
+        "sha256": "7bf245efb1813f51e54edb4d0f3e08c77394c67c66668672d0e05dcf929d61c7",
+        "bytes": 2885
+      },
+      {
+        "path": "opendbc_repo/opendbc/dbc/generator/hyundai/hyundai_can.dbc",
+        "url": "https://raw.githubusercontent.com/sunnypilot/sunnypilot/0b2c431d3abab630df0a32f53236944855a91aa3/opendbc_repo/opendbc/dbc/generator/hyundai/hyundai_can.dbc",
+        "sha256": "a02ffdaca52a94f8676e66936bfd3dcaa098b900bfb5fd9e991c2d8b4064d367",
+        "bytes": 94551
+      }
+    ],
+    "construction": "Independent byte-oriented serialization of the pinned legacy ESCC layout; expected physical values are fixed fixtures. No CANPacker or CANParser used to create bytes.",
+    "scope": "Transport telemetry only. Packet age does not establish underlying FCA11/SCC12 age, firmware identity, AEB preservation, or vehicle qualification."
+  },
+  "vectors": [
+    {
+      "name": "zero",
+      "data_hex": "0000000000000000",
+      "expected": {
+        "FCA_CmdAct": 0,
+        "CF_VSM_Warn_FCA11": 0,
+        "AEB_CmdAct": 0,
+        "CF_VSM_Warn_SCC12": 0,
+        "CF_VSM_DecCmdAct_SCC12": 0,
+        "CF_VSM_DecCmdAct_FCA11": 0,
+        "CR_VSM_DecCmd_SCC12": 0.0,
+        "ObjValid": 0,
+        "ACC_ObjStatus": 0,
+        "ACC_ObjLatPos": -20.0,
+        "ACC_ObjDist": 0.0,
+        "ACC_ObjRelSpd": -170.0,
+        "CR_VSM_DecCmd_FCA11": 0.0
+      }
+    },
+    {
+      "name": "closing",
+      "data_hex": "7d2503c8bca16753",
+      "expected": {
+        "FCA_CmdAct": 1,
+        "CF_VSM_Warn_FCA11": 2,
+        "AEB_CmdAct": 1,
+        "CF_VSM_Warn_SCC12": 3,
+        "CF_VSM_DecCmdAct_SCC12": 1,
+        "CF_VSM_DecCmdAct_FCA11": 0,
+        "CR_VSM_DecCmd_SCC12": 0.37,
+        "ObjValid": 1,
+        "ACC_ObjStatus": 1,
+        "ACC_ObjLatPos": 0.0,
+        "ACC_ObjDist": 22.2,
+        "ACC_ObjRelSpd": -4.199999999999989,
+        "CR_VSM_DecCmd_FCA11": 0.83
+      }
+    },
+    {
+      "name": "opening",
+      "data_hex": "a28005b752836bff",
+      "expected": {
+        "FCA_CmdAct": 0,
+        "CF_VSM_Warn_FCA11": 1,
+        "AEB_CmdAct": 0,
+        "CF_VSM_Warn_SCC12": 2,
+        "CF_VSM_DecCmdAct_SCC12": 0,
+        "CF_VSM_DecCmdAct_FCA11": 1,
+        "CR_VSM_DecCmd_SCC12": 1.28,
+        "ObjValid": 1,
+        "ACC_ObjStatus": 2,
+        "ACC_ObjLatPos": -1.6999999999999993,
+        "ACC_ObjDist": 42.5,
+        "ACC_ObjRelSpd": 2.0,
+        "CR_VSM_DecCmd_FCA11": 2.55
+      }
+    },
+    {
+      "name": "maxima",
+      "data_hex": "ffff07ffffffffff",
+      "expected": {
+        "FCA_CmdAct": 1,
+        "CF_VSM_Warn_FCA11": 3,
+        "AEB_CmdAct": 1,
+        "CF_VSM_Warn_SCC12": 3,
+        "CF_VSM_DecCmdAct_SCC12": 1,
+        "CF_VSM_DecCmdAct_FCA11": 1,
+        "CR_VSM_DecCmd_SCC12": 2.55,
+        "ObjValid": 1,
+        "ACC_ObjStatus": 3,
+        "ACC_ObjLatPos": 31.1,
+        "ACC_ObjDist": 204.7,
+        "ACC_ObjRelSpd": 239.5,
+        "CR_VSM_DecCmd_FCA11": 2.55
+      }
+    },
+    {
+      "name": "no_object",
+      "data_hex": "000000c800406a00",
+      "expected": {
+        "FCA_CmdAct": 0,
+        "CF_VSM_Warn_FCA11": 0,
+        "AEB_CmdAct": 0,
+        "CF_VSM_Warn_SCC12": 0,
+        "CF_VSM_DecCmdAct_SCC12": 0,
+        "CF_VSM_DecCmdAct_FCA11": 0,
+        "CR_VSM_DecCmd_SCC12": 0.0,
+        "ObjValid": 0,
+        "ACC_ObjStatus": 0,
+        "ACC_ObjLatPos": 0.0,
+        "ACC_ObjDist": 0.0,
+        "ACC_ObjRelSpd": 0.0,
+        "CR_VSM_DecCmd_FCA11": 0.0
+      }
+    }
+  ]
+}

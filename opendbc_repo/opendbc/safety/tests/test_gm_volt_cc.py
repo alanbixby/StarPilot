@@ -14,6 +14,8 @@ from opendbc.safety.tests.libsafety import libsafety_py
 class TestGmVoltCc(unittest.TestCase):
   def setUp(self):
     self.safety = libsafety_py.libsafety
+    # This ordinary CC fixture selects default experience before any mode init.
+    self.safety.set_alternative_experience(0)
     self.release = self.safety.set_safety_hooks(structs.CarParams.SafetyModel.allOutput, 0) != 0
     fp = gen_empty_fingerprint()
     fp[0].update({0xBE: 6, 0x3D1: 8, 0xC9: 8, 0x1E1: 7, 0x1F5: 8, 0x34A: 5, 0x1C4: 8, 0xBD: 7})

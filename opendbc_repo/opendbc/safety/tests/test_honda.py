@@ -169,6 +169,12 @@ class HondaBase(common.CarSafetyTest):
 
   RELAY_MALFUNCTION_ADDRS = {0: (0xE4, 0x194)}  # STEERING_CONTROL
 
+  def setUp(self):
+    # Ordinary Honda fixtures use default experience. Dedicated AOL fixtures
+    # select their own experience separately; no global/autouse reset is used.
+    libsafety_py.libsafety.set_alternative_experience(0)
+    super().setUp()
+
   def _powertrain_data_msg(self, cruise_on=None, brake_pressed=None, gas_pressed=None):
     # preserve the state
     if cruise_on is None:

@@ -4,9 +4,10 @@ These tests record the *current* incompatibility, not a safe ESCC path. Today th
 ordinary Sonata LONG path cannot see an inline ESCC interceptor: with 0x2AB on
 the powertrain bus it still selects the radar-disable startup owner, the generic
 init disable, the tester-present keeper and synthetic FCA12 "AEB disabled"
-output. On an ESCC installation that disables the stock radar AEB the
-interceptor exists to preserve. Only stock longitudinal (alpha long off) sends
-no radar-disable traffic.
+output. On an ESCC installation this traffic risks disabling stock radar AEB;
+the tests do not establish what the installed ECU or interceptor accepts. Only
+the inspected stock-longitudinal path (alpha long off) sends no radar-disable
+traffic. Its physical fallback behavior is not qualified here.
 
 When an ESCC owner is implemented, these assertions are expected to fail and
 must be reclassified against docs/research/escc-active-owner-spec.md, never

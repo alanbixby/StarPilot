@@ -1,6 +1,7 @@
 """Compiled incumbent IDs/layout and wire regressions for the nested startup type."""
 from importlib.resources import files
 from pathlib import Path
+import copy
 import hashlib
 import json
 import re
@@ -13,6 +14,9 @@ from openpilot.starpilot.car.tesla.tests.test_radar_schema_evolution import popu
 
 FIXTURE = Path(__file__).with_name('fixtures') / 'custom_before_preap_pedal.capnp'
 REVIEW = json.loads(FIXTURE.with_name('custom_reviewed_schema_additions.json').read_text())
+# Separately reviewed Sonata MADS appends to owned AOL carriers; never overrides a Tesla-reviewed type.
+MADS_REVIEW = json.loads(FIXTURE.with_name('custom_reviewed_mads_additions.json').read_text())
+APPROVED = {**REVIEW['types'], **MADS_REVIEW['types']}
 
 
 @pytest.fixture
@@ -25,7 +29,7 @@ def compare_node(old, new):
   assert old.schema.node.id == new.schema.node.id
   kind = old.schema.node.which()
   assert kind == new.schema.node.which()
-  approved = REVIEW['types'].get(hex(old.schema.node.id))
+  approved = APPROVED.get(hex(old.schema.node.id))
   if kind == 'struct':
     old_layout, new_layout = layout(old.schema), layout(new.schema)
     if approved is None:
@@ -51,11 +55,22 @@ def compare_node(old, new):
     compare_node(getattr(old, child.name), getattr(new, child.name))
 
 
+def incumbent_ids(node):
+  yield hex(node.schema.node.id)
+  for child in node.schema.node.nestedNodes:
+    yield from incumbent_ids(getattr(node, child.name))
+
+
 def test_all_incumbent_custom_type_ids_fields_and_layouts_are_preserved(historical):
   assert hashlib.sha256(FIXTURE.read_bytes()).hexdigest() == REVIEW['incumbent_fixture_sha256']
-  for name in re.findall(r'^(?:struct|enum) (\w+)', FIXTURE.read_text(), re.MULTILINE):
+  assert MADS_REVIEW['incumbent_fixture_sha256'] == REVIEW['incumbent_fixture_sha256']
+  assert not REVIEW['types'].keys() & MADS_REVIEW['types'].keys()
+  names = re.findall(r'^(?:struct|enum) (\w+)', FIXTURE.read_text(), re.MULTILINE)
+  # Every approval binds an incumbent type; none can admit an unrelated future type.
+  assert APPROVED.keys() <= {i for name in names for i in incumbent_ids(getattr(historical, name))}
+  for name in names:
     old = getattr(historical, name)
-    approved = REVIEW['types'].get(hex(old.schema.node.id))
+    approved = APPROVED.get(hex(old.schema.node.id))
     current_name = approved['after_name'] if approved else name
     compare_node(old, getattr(custom, current_name))
   # Startup capsules have no parent slots; published phone GPS@3 stays occupied.
@@ -135,3 +150,52 @@ def test_compiled_compatibility_check_rejects_unreviewed_changes(tmp_path, field
   else:
     with pytest.raises(AssertionError):
       compare_node(old, new)
+
+
+MADS_SCHEMA_MUTATIONS = {
+  'removed_mads_append': [('    madsButtons @13 :Bool;', '')],
+  'retyped_mads_append': [('madsButtons @13 :Bool;', 'madsButtons @13 :UInt8;')],
+  'defaulted_mads_append': [('madsButtons @13 :Bool;', 'madsButtons @13 :Bool = true;')],
+  'renamed_display_append': [('displayIntentValid @18', 'displayIntentFresh @18')],
+  'swapped_display_appends': [('displayIntentValid @18', 'displayIntentValid @19'),
+                              ('displayIntentEnabled @19', 'displayIntentEnabled @18')],
+  'unreviewed_extra_append': [('madsButtons @13 :Bool;', 'madsButtons @13 :Bool; extra @14 :Bool;')],
+  'retyped_incumbent_field': [('intentIntegrityEpoch @17 :UInt64;', 'intentIntegrityEpoch @17 :Int64;')],
+  'renamed_incumbent_field': [('lateralArmed @11', 'lateralArmedLatched @11')],
+  'removed_incumbent_field': [('    optionalSetRelease @12 :Bool;\n', ''), ('madsButtons @13', 'madsButtons @12')],
+  'changed_incumbent_type_id': [('AolAxisState @0xfc6241ed8877b611', 'AolAxisState @0xfc6241ed8877b612')],
+}
+
+
+@pytest.mark.parametrize('mutation', [None, *MADS_SCHEMA_MUTATIONS])
+def test_mads_owned_carrier_appends_are_exact(historical, tmp_path, mutation):
+  source = (Path(CEREAL_PATH) / 'custom.capnp').read_text()
+  for old, new in MADS_SCHEMA_MUTATIONS.get(mutation, []):
+    assert source.count(old) == 1
+    source = source.replace(old, new)
+  (tmp_path / 'custom.capnp').write_text(source)
+  parser = capnp.SchemaParser()
+  current = parser.load(str(tmp_path / 'custom.capnp'), imports=[CEREAL_PATH, str(files('opendbc') / 'car')])
+  if mutation is None:
+    compare_node(historical.AolAxisState, current.AolAxisState)
+  else:
+    with pytest.raises(AssertionError):
+      compare_node(historical.AolAxisState, current.AolAxisState)
+
+
+@pytest.mark.parametrize('approval', ['absent', 'offset', 'default', 'storage'])
+def test_mads_approval_is_required_and_exact(historical, monkeypatch, approval):
+  type_id = hex(custom.AolAxisState.IntentWire.schema.node.id)
+  entry = copy.deepcopy(APPROVED[type_id])
+  if approval == 'absent':
+    monkeypatch.delitem(APPROVED, type_id)
+  else:
+    if approval == 'offset':
+      entry['added_fields'][0]['slot']['offset'] += 1
+    elif approval == 'default':
+      entry['added_fields'][0]['slot']['defaultValue'] = {'bool': True}
+    else:
+      entry['new_storage']['dataWordCount'] += 1
+    monkeypatch.setitem(APPROVED, type_id, entry)
+  with pytest.raises(AssertionError):
+    compare_node(historical.AolAxisState, custom.AolAxisState)

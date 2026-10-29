@@ -1,0 +1,113 @@
+{
+  "reviewed_schema_commits": [
+    "9c7659c6290b06004ccb0a9cc0254ce896f6b356",
+    "c955996c1709bf8bba572eccf3d4a6abb0c66f94"
+  ],
+  "reviewed_schema_sha256": "99f0d3de82b432ce92e68e1d105b20a8ca595def0f407cae7d586ce6131cd24c",
+  "incumbent_fixture_sha256": "a36ab54c00b5bbe61d520873d24aadfb8f33babd70c31a07046516d5545838d9",
+  "review_basis": "Sonata default MADS appends to owned AOL carriers only: IntentWire.madsButtons @13 and AolAxisState.displayIntentValid @18/displayIntentEnabled @19, all Bool default false in existing padding. Upstream car.capnp is unchanged; every incumbent field descriptor and struct storage size was checked unchanged; only these three typed deltas are permitted.",
+  "types": {
+    "0xfc6241ed8877b611": {
+      "kind": "struct",
+      "before_name": "AolAxisState",
+      "after_name": "AolAxisState",
+      "old_field_count": 18,
+      "old_storage": {
+        "dataWordCount": 7,
+        "pointerCount": 3,
+        "preferredListEncoding": "inlineComposite",
+        "isGroup": false,
+        "discriminantCount": 0,
+        "discriminantOffset": 0
+      },
+      "new_storage": {
+        "dataWordCount": 7,
+        "pointerCount": 3,
+        "preferredListEncoding": "inlineComposite",
+        "isGroup": false,
+        "discriminantCount": 0,
+        "discriminantOffset": 0
+      },
+      "added_fields": [
+        {
+          "slot": {
+            "offset": 279,
+            "type": {
+              "bool": null
+            },
+            "defaultValue": {
+              "bool": false
+            },
+            "hadExplicitDefault": false
+          },
+          "name": "displayIntentValid",
+          "codeOrder": 18,
+          "discriminantValue": 65535,
+          "ordinal": {
+            "explicit": 18
+          }
+        },
+        {
+          "slot": {
+            "offset": 280,
+            "type": {
+              "bool": null
+            },
+            "defaultValue": {
+              "bool": false
+            },
+            "hadExplicitDefault": false
+          },
+          "name": "displayIntentEnabled",
+          "codeOrder": 19,
+          "discriminantValue": 65535,
+          "ordinal": {
+            "explicit": 19
+          }
+        }
+      ]
+    },
+    "0xc255773d8fee1e7d": {
+      "kind": "struct",
+      "before_name": "AolAxisState.IntentWire",
+      "after_name": "AolAxisState.IntentWire",
+      "old_field_count": 13,
+      "old_storage": {
+        "dataWordCount": 5,
+        "pointerCount": 1,
+        "preferredListEncoding": "inlineComposite",
+        "isGroup": false,
+        "discriminantCount": 0,
+        "discriminantOffset": 0
+      },
+      "new_storage": {
+        "dataWordCount": 5,
+        "pointerCount": 1,
+        "preferredListEncoding": "inlineComposite",
+        "isGroup": false,
+        "discriminantCount": 0,
+        "discriminantOffset": 0
+      },
+      "added_fields": [
+        {
+          "slot": {
+            "offset": 14,
+            "type": {
+              "bool": null
+            },
+            "defaultValue": {
+              "bool": false
+            },
+            "hadExplicitDefault": false
+          },
+          "name": "madsButtons",
+          "codeOrder": 13,
+          "discriminantValue": 65535,
+          "ordinal": {
+            "explicit": 13
+          }
+        }
+      ]
+    }
+  }
+}

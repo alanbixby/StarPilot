@@ -310,6 +310,7 @@ class TestEv6ConfiguredDesire(unittest.TestCase):
     from openpilot.selfdrive.car.card import Car
     from openpilot.selfdrive.car.cruise import VCruiseHelper
     from openpilot.starpilot.aol.intent import read_settings
+    from openpilot.starpilot.car.hyundai.sonata_mads import capture
 
     with tempfile.TemporaryDirectory() as directory:
       params = Params(directory)
@@ -322,6 +323,9 @@ class TestEv6ConfiguredDesire(unittest.TestCase):
       card.slc_transport_available = False
       card.v_cruise_helper = VCruiseHelper(card.CP)
       card.aol_card_intent = Ev6CardIntent(read_settings(params))
+      # Bypassing Card's constructor, retain its immutable startup MADS capture; EV6 is never eligible.
+      card.sonata_mads_buttons = capture(card.CP, params, settings=read_settings(params))
+      self.assertFalse(card.sonata_mads_buttons)
       owner = card.aol_card_intent
       cp_before = card.CP.as_reader().as_builder().to_bytes()
       def refresh():

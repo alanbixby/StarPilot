@@ -443,7 +443,7 @@ class DriverMonitoring:
       enabled = sm['selfdriveState'].enabled or aol_lateral_engaged
       wrong_gear = sm['carState'].gearShifter not in (car.CarState.GearShifter.drive, car.CarState.GearShifter.low)
       lowspeed = car_speed < self.settings._ALERT_MIN_SPEED
-      driver_engaged = sm['carState'].steeringPressed or sm['carState'].gasPressed
+      driver_engaged = sm['carState'].steeringPressed or (sm['selfdriveState'].enabled and sm['carState'].gasPressed)
       brake_disengage_prob = sm['modelV2'].meta.disengagePredictions.brakeDisengageProbs[0] # brake disengage prob in next 2s
       steering_angle_deg = sm['carState'].steeringAngleDeg
       rpyCalib = sm['extrinsicsCalibration'].rpyCalib

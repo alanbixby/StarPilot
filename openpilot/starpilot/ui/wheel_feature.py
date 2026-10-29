@@ -29,8 +29,15 @@ class WheelFeature:
       return base + (self.owner.longitudinal_available(), "configuration")
     return base + (True,) if self.owner.configuration_longitudinal() else base
 
+  def mads_selected(self):
+    from opendbc.car.hyundai.sonata_mads import eligible
+    return bool(eligible(self.owner.vehicle_params()) and read_saved(self.owner.params, 'SonataMadsButtons', 8) == (b'1', True))
+
   def choices(self, key):
     cp = self.owner.vehicle_params()
+    from openpilot.starpilot.car.hyundai.sonata_mads import SUPERSEDED_BUTTONS
+    if key in SUPERSEDED_BUTTONS and self.mads_selected():
+      return ()
     if self.capability() is None:
       return ()
     if key == PADDLE_KEY:
@@ -79,6 +86,10 @@ class WheelFeature:
     for key, label in zip(KEYS, LABELS, strict=True):
       choices = self.choices(key)
       if not choices:
+        from openpilot.starpilot.car.hyundai.sonata_mads import SUPERSEDED_BUTTONS
+        if key in SUPERSEDED_BUTTONS and self.mads_selected():
+          rows.append(FeatureRow(PREFIX + key, label, 'Set by MADS', available=False,
+                                 reason='Sunnypilot MADS Buttons controls this button after the next startup.'))
         continue
       raw, readable = read_saved(self.owner.params, key, 8)
       number = DEFAULTS.get(key, 0) if raw is None else int(raw) if raw in tuple(str(i).encode() for i in range(15)) else -1

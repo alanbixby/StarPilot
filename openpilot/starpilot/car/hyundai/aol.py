@@ -125,7 +125,9 @@ def _policy_for(CP) -> AolVehiclePolicy:
       alternative_experience_addition=32,
     )
   if qualified_classic_long(CP):
+    from opendbc.car.hyundai.sonata_mads import configured as sonata_mads_configured
     return AolVehiclePolicy(
+      cruise_main_required=not sonata_mads_configured(CP),
       intent_supported=True,
       settings_supported=True,
       runtime_supported=True,
@@ -278,6 +280,10 @@ def native_latch_rejected(CP, native) -> bool:
 
 
 def create_intent(CP, settings):
+  from opendbc.car.hyundai.sonata_mads import configured as sonata_mads_configured
+  if sonata_mads_configured(CP):
+    from openpilot.starpilot.car.hyundai.sonata_mads_intent import SonataMadsCardIntent
+    return SonataMadsCardIntent(CP, settings)
   from opendbc.car.hyundai.ev6_aol import qualified as ev6_qualified
   if CP.carFingerprint == HyundaiCAR.KIA_EV6 and qualified_canfd_stock(CP):
     from openpilot.starpilot.car.hyundai.ev6_intent import StockEv6CardIntent

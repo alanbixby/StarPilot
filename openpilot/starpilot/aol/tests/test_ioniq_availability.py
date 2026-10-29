@@ -94,7 +94,8 @@ class IoniqAvailabilityTests(unittest.TestCase):
     sd.axis_transport_required = sd.aol_replay or policy.ordinary_axis_ack_required
     sd.aol_authority_lost = sd.aol_dm_lateral_inhibit = False
     sd.aol_axis_decision = AxisDecision()
-    sd.aol_settings = None
+    if not (supplied_cp and genuine_events):
+      sd.aol_settings = None
     sd.aol_car_state_log_ns = 0
     sd.conditional_car_state_valid = False
     sd.aol_last_intent = None

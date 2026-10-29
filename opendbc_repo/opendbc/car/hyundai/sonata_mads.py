@@ -9,10 +9,6 @@ def eligible(cp):
               cp.flags & HyundaiFlags.HAS_LDA_BUTTON and classic_long_qualified(cp))
 
 
-def configured(cp):
-  return bool(eligible(cp) and getattr(cp, 'sonataMadsButtons', False))
-
-
 class SonataMainButtons(LongCruiseButtons):
   def __init__(self):
     super().__init__(track_main=True)

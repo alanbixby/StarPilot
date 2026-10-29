@@ -12,6 +12,7 @@ def test_mads_profile_settings_and_superseded_actions():
   with tempfile.TemporaryDirectory() as directory:
     params = Params(directory)
     cp = vehicle_params(CAR.HYUNDAI_SONATA_HYBRID, lda=True)
+    initial_cp = cp.to_dict()
     context = AuthorityContext(True, cp, cp.to_bytes())
 
     class Authority:
@@ -40,7 +41,7 @@ def test_mads_profile_settings_and_superseded_actions():
     keys = ('MainCruiseButtonControl', 'LKASButtonControl', 'CancelButtonControl', 'AolBrakePauseSpeedMps')
     before = {key: params.get(key) for key in keys}
     assert toggle('On')
-    assert not cp.sonataMadsButtons, 'Saving does not change this drive'
+    assert cp.to_dict() == initial_cp, 'Saving does not change this drive'
     assert next(row for row in page()['rows'] if row['label'] == 'Brake pause below')['value'] == 'Set by MADS'
     wheel = page('wheel')['rows']
     overridden = [row for row in wheel if row['label'] in ('LKAS press', 'Main cruise press', 'Cancel short press',

@@ -990,6 +990,7 @@ struct AolAxisState @0xfc6241ed8877b611 {
     # Selection feedback only; allowedLatch retains its driving gates.
     lateralArmed @11 :Bool;
     optionalSetRelease @12 :Bool;
+    madsButtons @13 :Bool; # Immutable Card startup choice; default/legacy is off.
   }
 
   # A separate modeld-owned payload carried by reserved Event Data @126.

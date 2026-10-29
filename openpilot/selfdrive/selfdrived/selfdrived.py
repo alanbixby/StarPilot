@@ -5,7 +5,6 @@ import time
 import threading
 import uuid
 from copy import copy
-from dataclasses import replace
 
 import openpilot.cereal.messaging as messaging
 
@@ -203,7 +202,13 @@ class SelfdriveD:
 
     # read params
     self.is_metric = self.params.get_bool("IsMetric")
-    self.aol_settings = read_settings(self.params) if self.aol_replay else None
+    from openpilot.starpilot.car.hyundai.sonata_mads import capture, MadsProfileAgreement, effective_settings as sonata_mads_settings
+    self.sonata_mads_buttons = capture(self.CP, self.params)
+    from opendbc.car.hyundai.sonata_mads import eligible as sonata_mads_eligible
+    self.sonata_mads_agreement = MadsProfileAgreement(self.sonata_mads_buttons) if sonata_mads_eligible(self.CP) else None
+    self.aol_cruise_main_required = self.aol_cruise_main_required and not self.sonata_mads_buttons
+    self.aol_settings = sonata_mads_settings(self.CP, read_settings(self.params),
+                                           mads_buttons=self.sonata_mads_buttons) if self.aol_replay else None
     self.is_ldw_enabled = self.params.get_bool("IsLdwEnabled")
     self.disengage_on_accelerator = self.params.get_bool("DisengageOnAccelerator")
     self.radar_recovery_enabled = self.params.get_bool("RadarRecoveryAlert")
@@ -1068,11 +1073,8 @@ class SelfdriveD:
         return None
       # Earlier exact companions only veto the normally validated fresh pair.
       # Their clocks never renew a source or supply an output lease.
-      intent = replace(intent, allowedLatch=intent.allowedLatch and restriction.allowedLatch,
-        lateralArmed=intent.lateralArmed and restriction.lateralArmed,
-        pauseLateral=intent.pauseLateral or restriction.pauseLateral,
-        pauseLongitudinal=intent.pauseLongitudinal or restriction.pauseLongitudinal,
-        optionalSetRelease=intent.optionalSetRelease and restriction.optionalSetRelease)
+      from openpilot.starpilot.aol.intent_companion import restrict_intent
+      intent = restrict_intent(intent, restriction)
     return intent
 
   def update_alerts(self, CS):
@@ -1511,6 +1513,9 @@ class SelfdriveD:
         if not axis_deferred and self._expire_axis_continuity(CS, final_ns):
           return self.publish_axis_proof(CS, defer_events=defer_events, source_context=source_context)
       if not axis_deferred:
+        from openpilot.starpilot.car.hyundai.sonata_mads import publish_display_intent
+        publish_display_intent(axis, accepted_intent if reason != 'critical' else None,
+                               now_ns=time.monotonic_ns() if source_clock_scoped else now_ns)
         self.aol_sequence = next_sequence
         self.pm.send('aolAxisState', axis_msg)
         # Bind critical history to the actual completed axis publication. The
@@ -1914,6 +1919,9 @@ class SelfdriveD:
                               previous=getattr(self, 'aol_last_intent', None),
                               companion=intent_companion, drain=False) if intent_drained else None
       intent = self.reconciled_intent(intent, previous_intent, reconciled_pairs, reconciled_epoch, now_ns)
+      agreement = getattr(self, 'sonata_mads_agreement', None)
+      if agreement is not None:
+        intent = agreement.accept(intent)
       self.aol_last_intent = intent
       from openpilot.starpilot.aol.dm import dm_clear, observe_owner
       observe_owner(self, intent, previous_intent)
@@ -2145,7 +2153,8 @@ class SelfdriveD:
     while not evt.is_set():
       self.is_metric = self.params.get_bool("IsMetric")
       if self.aol_replay:
-        self.aol_settings = read_settings(self.params)
+        from openpilot.starpilot.car.hyundai.sonata_mads import effective_settings as sonata_mads_settings
+        self.aol_settings = sonata_mads_settings(self.CP, read_settings(self.params), mads_buttons=self.sonata_mads_buttons)
       self.is_ldw_enabled = self.params.get_bool("IsLdwEnabled")
       self.disengage_on_accelerator = self.params.get_bool("DisengageOnAccelerator")
       self.radar_recovery_enabled = self.params.get_bool("RadarRecoveryAlert")

@@ -372,6 +372,10 @@ class Car:
     from openpilot.starpilot.car.hyundai.button_migration import migrate_lkas_default
     migrate_lkas_default(self.CP, self.params)
     self.is_metric = self.params.get_bool("IsMetric")
+    from openpilot.starpilot.car.hyundai.sonata_mads import capture, MadsDisplayState
+    self.sonata_mads_buttons = capture(self.CP, self.params)
+    if self.CP.brand == 'hyundai' and hasattr(self.CI.CS, 'sonata_mads_buttons'):
+      self.CI.CS.sonata_mads_buttons = self.sonata_mads_buttons
     aol_policy = aol_policy_for(self.CP)
     if aol_policy.full_axis_runtime_required and not self.aol_replay:
       self.aol_replay = True
@@ -379,7 +383,10 @@ class Car:
       self.sm = messaging.SubMaster(subscribed_services)
       self.pm.sock['aolIntentWire'] = messaging.pub_sock('aolIntentWire')
     initialize_aol_preference(self.CP)
-    self.aol_settings = read_settings(self.params) if self.aol_replay else None
+    from openpilot.starpilot.car.hyundai.sonata_mads import effective_settings as sonata_mads_settings
+    self.aol_settings = sonata_mads_settings(self.CP, read_settings(self.params), mads_buttons=self.sonata_mads_buttons) if self.aol_replay else None
+    self.sonata_mads_display = MadsDisplayState(available=bool(
+      self.sonata_mads_buttons and self.aol_settings is not None and self.aol_settings.enabled))
     self.aol_qualified = bool(self.aol_settings is not None and
                               (aol_policy.full_axis_runtime_required or aol_policy.physical_stalk_owner or independent_axis_requested(self.aol_settings,
                                 include_auxiliary=aol_policy.intent_supported and not aol_policy.explicit_latch)) and
@@ -410,7 +417,7 @@ class Car:
       self.learning_stamp_observer = self.record_learning_send_stamp if install_observer(self.CI) else None
     except Exception:
       pass  # Optional learning setup cannot stop native startup.
-    self.aol_transport_feedback = TransportPauseFeedback(self.CP) if self.aol_replay else None
+    self.aol_transport_feedback = TransportPauseFeedback(self.CP, mads_buttons=getattr(self, 'sonata_mads_buttons', False)) if self.aol_replay else None
     if isinstance(self.CI, GMInterface) and self.CI.CC is not None and self.CI.CC.volt_sng_plan_input is not None:
       self.CI.CC.volt_sng_plan_input.boottime = self.volt_startup_keepalive()
 
@@ -594,7 +601,7 @@ class Car:
         self.aol_process_fault_context = AolProcessFaultContext()
       self.aol_process_fault_context.observe(self.sm, now_ns)
       if getattr(self, 'aol_transport_feedback', None) is None:
-        self.aol_transport_feedback = TransportPauseFeedback(self.CP)
+        self.aol_transport_feedback = TransportPauseFeedback(self.CP, mads_buttons=getattr(self, 'sonata_mads_buttons', False))
       cancel_source_ns = self.aol_cancel_source(CS, now_ns)
       brake_source_ns = self.aol_honda_brake_source(CS, now_ns)
       gm_withdrawal_source_ns = self.aol_gm_withdrawal_source(CS, now_ns)
@@ -823,7 +830,8 @@ class Car:
           self.v_cruise_helper.apply_slc_target(float(command.targetMps), self.is_metric)
         self.slc_receipts.append(('commandApplied' if applicable else 'commandRejected', command,
                                   previous_mps, float(self.v_cruise_helper.v_cruise_kph / 3.6), now_ns))
-    blocked_keys = set()
+    from openpilot.starpilot.car.hyundai.sonata_mads import SUPERSEDED_BUTTONS
+    blocked_keys = set(SUPERSEDED_BUTTONS) if self.sonata_mads_buttons else set()
     if self.manual_receipt is not None:
       blocked_keys.add(key_for(self.manual_receipt[0]))
     for receipt in (self.traffic_receipt, self.switchback_receipt):
@@ -904,7 +912,7 @@ class Car:
       return True
     from openpilot.starpilot.aol.vehicle import intent_disarming_fault
     if getattr(self, 'aol_transport_feedback', None) is None:
-      self.aol_transport_feedback = TransportPauseFeedback(self.CP)
+      self.aol_transport_feedback = TransportPauseFeedback(self.CP, mads_buttons=getattr(self, 'sonata_mads_buttons', False))
     hkg_cancel_retained = hkg_cancel_intent_retained(self.CP, CS, self.sm, self.aol_transport_feedback,
       self.aol_card_intent, cancel_source_ns=self.aol_cancel_source(CS, now_ns), now_ns=now_ns,
       producer=getattr(self, 'slc_producer_session', ''))
@@ -1052,7 +1060,7 @@ class Car:
       intent_msg.aolIntentWire = encode_intent(IntentState(
         self.slc_producer_session, self.aol_sequence, int(cs_send.logMonoTime), int(cs_send.logMonoTime),
         int(cs_send.logMonoTime) + 200_000_000, allowed_latch, pause_lateral, pause_longitudinal, self.aol_qualified, lateral_armed,
-        bool(getattr(self.aol_card_intent, "optional_set_release_policy", lambda: False)())))
+        bool(getattr(self.aol_card_intent, "optional_set_release_policy", lambda: False)()), self.sonata_mads_buttons))
       self.pm.send('aolIntentWire', intent_msg)
 
     # carState wakes selfdrived. Commit its companion intent first, so a
@@ -1108,6 +1116,9 @@ class Car:
       companion.starpilotCarState.sourceCarStateMonoTime = int(cs_send.logMonoTime)
       self.v_cruise_helper.toyota.publish(companion.starpilotCarState.toyotaCruise)
     self.car_gps_publisher.update(self.CI.CS, self.pm, companion)
+    if self.sonata_mads_buttons:
+      self.sonata_mads_display.record(int(cs_send.logMonoTime), valid=bool(cs_send.valid and not CS.canTimeout),
+        producer=self.slc_producer_session, session=self.aol_axis_session(), context=self.sonata_display_context())
     self.pm.send('carState', cs_send)
     if getattr(self, 'learning_stamp_observer', None) is not None:
       self.learning_car_state_source_ns = int(cs_send.logMonoTime)
@@ -1548,6 +1559,18 @@ class Car:
       time.sleep(.01)
     return False
 
+  def sonata_display_context(self):
+    return (id(self.CI), id(self.CI.CS), id(self.CI.CC), id(self.vehicle_startup.owner), self.ci_initialized)
+
+  def apply_with_lateral_display(self, CC, now_nanos, **kwargs):
+    display = getattr(self, 'sonata_mads_display', None)
+    if getattr(self, 'sonata_mads_buttons', False) and display is not None and self.CI.CC is not None:
+      self.CI.CC.lateral_display = display.snapshot(self.sm,
+        now_ns=int(self.sm.logMonoTime['carControl']) if REPLAY else time.monotonic_ns(),
+        producer=self.slc_producer_session, session=getattr(self.aol_transport_feedback, 'session', ''),
+        context=self.sonata_display_context(), source_healthy=bool(self.CI.CS.out.canValid and not self.CI.CS.out.canTimeout))
+    return self.CI.apply(CC, now_nanos, **kwargs)
+
   def controls_update(self, CS: car.CarState, CC: car.CarControl, *, initialize_only=False):
     """control update loop, driven by carControl"""
 
@@ -1680,7 +1703,7 @@ class Car:
             owner.sources_current(self.CI, now_boot_ns)):
           inactive = car.CarControl.new_message().as_reader()
           self._invalidate_feedback_output(assignment=True)
-          self.last_actuators_output, can_sends = self.CI.apply(inactive, now_boot_ns)
+          self.last_actuators_output, can_sends = self.apply_with_lateral_display(inactive, now_boot_ns)
           self.publish_sendcan(can_sends, valid=CS.canValid)
         return
       if (((isinstance(self.CI, GMInterface) and self.gm_startup_keepalive()) or ev6_startup or classic_startup) and
@@ -1697,7 +1720,7 @@ class Car:
             self.publish_sendcan([], valid=False)
             return
           self._invalidate_feedback_output(assignment=True)
-          self.last_actuators_output, can_sends = self.CI.apply(inactive, now_boot_ns)
+          self.last_actuators_output, can_sends = self.apply_with_lateral_display(inactive, now_boot_ns)
         else:
           self._invalidate_feedback_output(assignment=True)
           self.last_actuators_output, can_sends = cast(GMInterface, self.CI).apply(inactive, now_boot_ns, startup_keepalive=True)
@@ -1763,7 +1786,7 @@ class Car:
         update_subaru_sng(self, CS, CC, now_nanos)
         from openpilot.starpilot.car.subaru.stop_start_caller import update as update_subaru_startup
         update_subaru_startup(self, now_nanos)
-      self.last_actuators_output, can_sends = self.CI.apply(CC, now_nanos)
+      self.last_actuators_output, can_sends = self.apply_with_lateral_display(CC, now_nanos)
       self.publish_sendcan(can_sends, valid=CS.canValid)
       if learning_snapshot is not None and self.learning_send_committed_mono_ns:
         try:
@@ -1826,7 +1849,8 @@ class Car:
       self.experimental_mode = self.params.get_bool("ExperimentalMode") and self.CP.openpilotLongitudinalControl
       self.initial_cruise_speed = self.params.get("InitialCruiseSpeedKph", return_default=True)
       if self.aol_card_intent is not None:
-        self.aol_card_intent.settings = read_settings(self.params)
+        from openpilot.starpilot.car.hyundai.sonata_mads import effective_settings as sonata_mads_settings
+        self.aol_card_intent.settings = sonata_mads_settings(self.CP, read_settings(self.params), mads_buttons=self.sonata_mads_buttons)
       now = time.monotonic()
       if now >= next_cruise_read:
         self.slc_requested_configuration = self.read_slc_configuration()

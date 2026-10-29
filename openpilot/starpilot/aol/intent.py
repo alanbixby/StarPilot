@@ -27,6 +27,7 @@ class AolSettings:
   cancel_actions: tuple[int, int, int]
   mode_actions: tuple[int, int, int] = (0, 0, 0)
   custom_actions: tuple[int, int, int] = (0, 0, 0)
+  mads_buttons: bool = False
 
 
 def _button_action(params, key: str) -> int:

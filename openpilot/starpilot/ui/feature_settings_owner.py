@@ -53,6 +53,8 @@ from openpilot.starpilot.saved_source import read_saved
 from openpilot.starpilot.ui.wheel_feature import WheelFeature, PREFIX as WHEEL_PREFIX
 from openpilot.starpilot.longitudinal.output_max import KEY as OUTPUT_MAX_KEY
 from openpilot.starpilot.ui.tesla_screen_feature import TeslaScreenFeature, KEYS as TESLA_SCREEN_KEYS
+from openpilot.starpilot.ui.sonata_mads_feature import SonataMadsFeature
+from openpilot.starpilot.car.hyundai.sonata_mads import PARAM as SONATA_MADS_PARAM
 from openpilot.starpilot.ui.ford_lateral_feature import FordLateralFeature, FordClusterFeature
 from openpilot.starpilot.ui.ford_pinion_feature import FordPinionFeature
 from openpilot.starpilot.ui.preap_radar_feature import PreAPRadarFeature, KEYS as PREAP_RADAR_KEYS, capability as preap_radar_capability
@@ -159,6 +161,7 @@ class FeatureSettingsOwner:
                                       configuration_longitudinal=self.configuration_longitudinal)
     self.long_profiles = LongProfileFeature(self)
     self.tesla_screen = TeslaScreenFeature(self)
+    self.sonata_mads = SonataMadsFeature(self)
     from openpilot.starpilot.ui.gm_cancel_remap_feature import GmCancelRemapFeature
     self.gm_cancel_remap = GmCancelRemapFeature(self)
 
@@ -1043,6 +1046,7 @@ class FeatureSettingsOwner:
                                  "Invalid saved brake threshold" if not threshold_valid else
                                  "Applies after the next startup" if pending else
                                  "Keep steering assistance available independently of cruise control"))
+      rows.extend(self.sonata_mads.rows(parked))
       threshold_available = allowed and unit_valid and all(self._readable(key) for key in
                                                           (AOL_THRESHOLD, AOL_LEGACY_THRESHOLD, "IsMetric"))
       source_label = "Current saved threshold" if canonical is not None else "Prior saved threshold" if legacy is not None else "Default threshold"
@@ -1055,6 +1059,9 @@ class FeatureSettingsOwner:
                              dependencies=(("IsMetric", unit_raw), (AOL_LEGACY_THRESHOLD, legacy),
                                            ("AlwaysOnLateral", self._raw("AlwaysOnLateral"))), display_unit=unit if unit_valid else "",
                              repair_value="0" if not threshold_valid and unit_valid else "", default_value="0"))
+      if self.sonata_mads.selected():
+        rows[-1] = replace(rows[-1], value='Set by MADS', available=False, choices=(),
+                           reason='Sunnypilot MADS Buttons keeps steering on while braking.')
     elif page == FeaturePage.WHEEL:
       title = "Wheel Controls"
       rows.extend(self.wheel.rows())
@@ -1339,6 +1346,10 @@ class FeatureSettingsOwner:
       return self._apply_pedal_setup(request)
     if key in PREAP_RADAR_KEYS:
       return self.preap_radar.apply(request)
+    if key == SONATA_MADS_PARAM:
+      return self.sonata_mads.apply(request)
+    if key == AOL_THRESHOLD and self.sonata_mads.selected():
+      return False
     if key in TESLA_SCREEN_KEYS:
       return self.tesla_screen.apply(request)
     if key == GM_TUNE_KEY:

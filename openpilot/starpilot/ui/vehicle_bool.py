@@ -2,7 +2,7 @@
 
 VEHICLE_BOOL_KEYS = frozenset(("AlphaLongitudinalEnabled", "SubaruAvhStartup", "SubaruStopStartOff", "SubaruSNG", "SubaruRedneckCruise",
                               "GMPedalLongitudinal", "DisableOpenpilotLongitudinal", "LongPitch", "VoltSNG", "GMAutoHold", "VoltOnePedalMode",
-                              "TeslaAOLScreenTap", "TeslaAOLDisengageOnBrake",
+                              "SonataMadsButtons", "TeslaAOLScreenTap", "TeslaAOLDisengageOnBrake",
                               "RemoteStartBootsComma", "HKGRemoteStartBootsComma", "IgnoreIgnitionLine", "TeslaWakeOnCAN"))
 
 
@@ -40,6 +40,8 @@ def confirmation_question(request):
     return f"{verb} Volt one-pedal driving after the next startup? Lifting off the accelerator can apply the brakes with cruise disengaged and cruise main on."
   if request.key == "LongPitch":
     return f"{verb} compensation for road grade? This refreshes during the drive."
+  if request.key == "SonataMadsButtons":
+    return f"{verb} sunnypilot MADS buttons after the next vehicle startup? Cruise MAIN will turn steering on and off."
   if request.key == "TeslaAOLScreenTap":
     return f"{verb} three-finger screen taps for Always On Lateral after the next startup? Cruise control stays independent."
   if request.key == "TeslaAOLDisengageOnBrake":

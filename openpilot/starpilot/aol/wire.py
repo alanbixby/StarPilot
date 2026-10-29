@@ -68,6 +68,9 @@ class IntentState:
   settingsQualified: bool
   lateralArmed: bool = False
   optionalSetRelease: bool = False
+  madsButtons: bool = False
+  # Consumer-only restriction provenance; never a producer wire field.
+  madsButtonsConsistent: bool = True
 
 
 def _bounded_id(value: str) -> str:
@@ -141,7 +144,7 @@ def _read_intent(value) -> IntentState | None:
     result = IntentState(_bounded_id(str(value.producerSessionId)), int(value.sequence),
                          int(value.carStateLogMonoTime), int(value.observedMonoTime), int(value.validUntilMonoTime),
                          bool(value.allowedLatch), bool(value.pauseLateral), bool(value.pauseLongitudinal),
-                         bool(value.settingsQualified), bool(value.lateralArmed), bool(value.optionalSetRelease))
+                         bool(value.settingsQualified), bool(value.lateralArmed), bool(value.optionalSetRelease), bool(value.madsButtons))
     if result.validUntilMonoTime < result.observedMonoTime:
       return None
     return result
@@ -161,6 +164,8 @@ def decode_intent(raw: bytes) -> IntentState | None:
 
 
 def encode_intent(value: IntentState) -> bytes:
+  if not value.madsButtonsConsistent:
+    raise ValueError('Folded profile disagreement cannot become a producer wire')
   _bounded_id(value.producerSessionId)
   message = custom.AolAxisState.IntentWire.new_message(
     kind=INTENT_KIND, version=WIRE_VERSION, producerSessionId=value.producerSessionId,
@@ -168,7 +173,7 @@ def encode_intent(value: IntentState) -> bytes:
     observedMonoTime=value.observedMonoTime, validUntilMonoTime=value.validUntilMonoTime,
     allowedLatch=value.allowedLatch, pauseLateral=value.pauseLateral,
     pauseLongitudinal=value.pauseLongitudinal, settingsQualified=value.settingsQualified,
-    lateralArmed=value.lateralArmed, optionalSetRelease=value.optionalSetRelease)
+    lateralArmed=value.lateralArmed, optionalSetRelease=value.optionalSetRelease, madsButtons=value.madsButtons)
   data = message.to_bytes()
   if len(data) > MAX_WIRE_BYTES:
     raise ValueError('AOL intent payload exceeds wire bound')

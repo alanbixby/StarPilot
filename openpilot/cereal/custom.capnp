@@ -920,6 +920,9 @@ struct AolAxisState @0xfc6241ed8877b611 {
   faultSessionId @15 :Text;
   intentProducerSessionId @16 :Text;
   intentIntegrityEpoch @17 :UInt64;
+  # Display-only retained intent, independent of final actuator permission.
+  displayIntentValid @18 :Bool;
+  displayIntentEnabled @19 :Bool;
 
   enum FaultReason {
     unknown @0;
@@ -987,6 +990,7 @@ struct AolAxisState @0xfc6241ed8877b611 {
     # Selection feedback only; allowedLatch retains its driving gates.
     lateralArmed @11 :Bool;
     optionalSetRelease @12 :Bool;
+    madsButtons @13 :Bool; # Immutable Card startup choice; default/legacy is off.
   }
 
   # A separate modeld-owned payload carried by reserved Event Data @126.

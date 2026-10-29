@@ -41,3 +41,56 @@ Common transport and arbitration tests live in `aol/tests`. Vehicle host tests
 live in `selfdrive/car/tests`, and native safety tests in
 `opendbc_repo/opendbc/safety/tests`. Keep new vehicle admission and its positive
 and negative safety tests with the corresponding vehicle port.
+
+## Sonata default MADS profile
+
+`SonataMadsButtons` defaults off. The parked **Sunnypilot MADS Buttons** preference
+is shown only for the qualified Sonata Hybrid classic CAN OP-long configuration
+with a detected lane button. Card and SelfdriveD independently capture it once at startup. Card configures
+its CarState directly and publishes the fixed choice on owned
+`IntentWire.madsButtons @13`. A missing legacy bit is off; disagreement rejects
+that producer session permanently, including later packets advertising a matching
+choice. Pair/latest/SM restrictions, verified older SM projections and reconciled
+sources preserve immutable-profile contradictions without renewing any source
+clock. Consumer-only consistency provenance cannot be serialized as a producer
+wire, and rejected producer identities cannot regain eligibility by cycling
+through another producer. Replacing a producer requires a newly unarmed startup and fresh ordinary
+physical authorization. Other Hyundai profiles and the
+existing defaults retain their behavior.
+
+With the profile selected and AOL enabled, a fresh lane-button press toggles
+steering independently of cruise MAIN. MAIN OFF→ON enables steering; ON→OFF
+withdraws steering and ordinary longitudinal engagement. SET/RES release can
+engage longitudinal and steering together, under the ordinary engagement and
+previous-speed rules. CANCEL, default braking and accelerator input preserve
+already armed steering. They cannot invent a new steering authorization.
+
+The software MAIN latch starts off each process session. Neutral must be seen
+before a fresh press; held-at-start or after expired CLU input does not turn it
+on. TCS health remains a separate prerequisite. The profile uses the unchanged
+native `0xC06`/alternative-experience `32` contract: physical LFA/MAIN/SET proof,
+required RX health, host leases, heartbeat and current native acknowledgment
+remain required. It changes no actuator limits or driver monitoring rules.
+Native may retain an old physical token within a session, including ordinary
+SET authority across some TCS faults. Host withdrawal and the ordinary state
+machine prevent automatic re-engagement; healthy CAN alone is not a gesture.
+
+The profile supersedes LKAS, MAIN and CANCEL assignments and the brake-pause
+threshold in memory. Their saved values are preserved and restored on the next
+startup with the profile off. The UI shows those rows as **Set by MADS**.
+
+SelfdriveD transports fresh retained intent as the display-only
+`aolAxisState.displayIntentValid/displayIntentEnabled` facts. Before every
+`CI.apply`, Card injects a `LateralDisplay` controller input joined to its own
+recent valid carState publications, producer and accepted axis session, with
+an original 30 ms source lease. This permits the normal preceding-command
+ordering. Producer, axis-session and CI/startup replacement clear the source
+history. No upstream CarParams or CarControl fields are added.
+`available` captures the qualified profile and AOL master at startup and stays
+set on stale input; `valid` and `enabled` clear on invalid or stale input.
+The controller consumes the input once per update and retains only static
+availability, so a missed refresh cannot retain a white paused wheel.
+Enabled intent may remain true through temporary output gates, so the factory
+display can distinguish paused steering from an explicit driver withdrawal.
+Neither these facts nor host/native regression tests establish on-car
+qualification, factory HUD rendering, or ESCC hardware compatibility.

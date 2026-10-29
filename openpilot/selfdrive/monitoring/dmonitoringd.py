@@ -16,7 +16,7 @@ def dmonitoringd_thread():
   pm = messaging.PubMaster(['driverMonitoringState'])
   aol_replay = os.getenv('AOL_REPLAY_RUNTIME') == '1' or feature_requested(params, 'aol')
   required = ['driverStateV2', 'extrinsicsCalibration', 'carState', 'selfdriveState', 'modelV2']
-  sm = messaging.SubMaster(required + (['aolAxisState', 'aolSafetyWire'] if aol_replay else []), poll='driverStateV2')
+  sm = messaging.SubMaster(required + ['carControl'] + (['aolAxisState', 'aolSafetyWire'] if aol_replay else []), poll='driverStateV2')
 
   DM = DriverMonitoring(rhd_saved=params.get_bool("IsRhdDetected"), always_on=params.get_bool("AlwaysOnDM"))
   demo_mode=False
@@ -29,7 +29,8 @@ def dmonitoringd_thread():
       continue
 
     valid = sm.all_checks(required)
-    aol_engaged = aol_replay and monitoring_lateral_engaged(sm, now_ns=time.monotonic_ns())
+    # Actual lateral control must keep monitoring engaged across AOL proof gaps.
+    aol_engaged = sm['carControl'].latActive or (aol_replay and monitoring_lateral_engaged(sm, now_ns=time.monotonic_ns()))
     if demo_mode and sm.valid['driverStateV2']:
       DM.run_step(sm, demo=True)
     elif valid:

@@ -295,6 +295,8 @@ class Car:
           cp, self.ioniq6_long_pending = prepare_ioniq6_long_candidate(
             cp, long_cp, enabled=eligible, is_release=is_release)
           self.ioniq6_long_selected = self.ioniq6_long_pending
+        from openpilot.starpilot.car.hyundai.sonata_mads import prepare as prepare_sonata_mads
+        cp = prepare_sonata_mads(cp, self.params)
         cp = startup_preferences.prepare(cp, fingerprints=fingerprints)
         from openpilot.starpilot.car.ford.longitudinal_preferences import prepare_release_long as prepare_ford_release_long
         cp = prepare_ford_release_long(cp, self.params, is_release=is_release, enabled=openpilot_enabled_toggle)
@@ -379,7 +381,8 @@ class Car:
       self.sm = messaging.SubMaster(subscribed_services)
       self.pm.sock['aolIntentWire'] = messaging.pub_sock('aolIntentWire')
     initialize_aol_preference(self.CP)
-    self.aol_settings = read_settings(self.params) if self.aol_replay else None
+    from openpilot.starpilot.car.hyundai.sonata_mads import effective_settings as sonata_mads_settings
+    self.aol_settings = sonata_mads_settings(self.CP, read_settings(self.params)) if self.aol_replay else None
     self.aol_qualified = bool(self.aol_settings is not None and
                               (aol_policy.full_axis_runtime_required or aol_policy.physical_stalk_owner or independent_axis_requested(self.aol_settings,
                                 include_auxiliary=aol_policy.intent_supported and not aol_policy.explicit_latch)) and
@@ -823,7 +826,9 @@ class Car:
           self.v_cruise_helper.apply_slc_target(float(command.targetMps), self.is_metric)
         self.slc_receipts.append(('commandApplied' if applicable else 'commandRejected', command,
                                   previous_mps, float(self.v_cruise_helper.v_cruise_kph / 3.6), now_ns))
-    blocked_keys = set()
+    from opendbc.car.hyundai.sonata_mads import configured as sonata_mads_configured
+    from openpilot.starpilot.car.hyundai.sonata_mads import SUPERSEDED_BUTTONS
+    blocked_keys = set(SUPERSEDED_BUTTONS) if sonata_mads_configured(self.CP) else set()
     if self.manual_receipt is not None:
       blocked_keys.add(key_for(self.manual_receipt[0]))
     for receipt in (self.traffic_receipt, self.switchback_receipt):
@@ -1826,7 +1831,8 @@ class Car:
       self.experimental_mode = self.params.get_bool("ExperimentalMode") and self.CP.openpilotLongitudinalControl
       self.initial_cruise_speed = self.params.get("InitialCruiseSpeedKph", return_default=True)
       if self.aol_card_intent is not None:
-        self.aol_card_intent.settings = read_settings(self.params)
+        from openpilot.starpilot.car.hyundai.sonata_mads import effective_settings as sonata_mads_settings
+        self.aol_card_intent.settings = sonata_mads_settings(self.CP, read_settings(self.params))
       now = time.monotonic()
       if now >= next_cruise_read:
         self.slc_requested_configuration = self.read_slc_configuration()

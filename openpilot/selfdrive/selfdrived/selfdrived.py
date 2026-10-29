@@ -203,7 +203,8 @@ class SelfdriveD:
 
     # read params
     self.is_metric = self.params.get_bool("IsMetric")
-    self.aol_settings = read_settings(self.params) if self.aol_replay else None
+    from openpilot.starpilot.car.hyundai.sonata_mads import effective_settings as sonata_mads_settings
+    self.aol_settings = sonata_mads_settings(self.CP, read_settings(self.params)) if self.aol_replay else None
     self.is_ldw_enabled = self.params.get_bool("IsLdwEnabled")
     self.disengage_on_accelerator = self.params.get_bool("DisengageOnAccelerator")
     self.radar_recovery_enabled = self.params.get_bool("RadarRecoveryAlert")
@@ -1511,6 +1512,9 @@ class SelfdriveD:
         if not axis_deferred and self._expire_axis_continuity(CS, final_ns):
           return self.publish_axis_proof(CS, defer_events=defer_events, source_context=source_context)
       if not axis_deferred:
+        from openpilot.starpilot.car.hyundai.sonata_mads import publish_display_intent
+        publish_display_intent(axis, accepted_intent if reason != 'critical' else None,
+                               now_ns=time.monotonic_ns() if source_clock_scoped else now_ns)
         self.aol_sequence = next_sequence
         self.pm.send('aolAxisState', axis_msg)
         # Bind critical history to the actual completed axis publication. The
@@ -2145,7 +2149,8 @@ class SelfdriveD:
     while not evt.is_set():
       self.is_metric = self.params.get_bool("IsMetric")
       if self.aol_replay:
-        self.aol_settings = read_settings(self.params)
+        from openpilot.starpilot.car.hyundai.sonata_mads import effective_settings as sonata_mads_settings
+        self.aol_settings = sonata_mads_settings(self.CP, read_settings(self.params))
       self.is_ldw_enabled = self.params.get_bool("IsLdwEnabled")
       self.disengage_on_accelerator = self.params.get_bool("DisengageOnAccelerator")
       self.radar_recovery_enabled = self.params.get_bool("RadarRecoveryAlert")

@@ -920,6 +920,9 @@ struct AolAxisState @0xfc6241ed8877b611 {
   faultSessionId @15 :Text;
   intentProducerSessionId @16 :Text;
   intentIntegrityEpoch @17 :UInt64;
+  # Display-only retained intent, independent of final actuator permission.
+  displayIntentValid @18 :Bool;
+  displayIntentEnabled @19 :Bool;
 
   enum FaultReason {
     unknown @0;

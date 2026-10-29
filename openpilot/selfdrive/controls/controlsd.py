@@ -76,6 +76,9 @@ class Controls:
       self.params, enabled=self.params.get_bool("OpenpilotEnabledToggle"))
     self.torque_learning_allowed = learning_allowed(self.params, self.CP, selection=self.lateral_controller_selection)
     self.aol_replay = feature_enabled(self.params, self.CP, 'aol', os.environ)
+    from opendbc.car.hyundai.sonata_mads import configured as sonata_mads_configured
+    from openpilot.starpilot.aol.intent import read_settings
+    self.sonata_mads_display_available = bool(sonata_mads_configured(self.CP) and read_settings(self.params).enabled)
     self.aol_transition_diagnostic = TransitionDiagnostic() if self.aol_replay and self.CP.brand == 'gm' else None
     self.ordinary_axis_ack_required = axis_policy_for(self.CP).ordinary_axis_ack_required
     self.longitudinal_inputs = LongitudinalInputs(self.CP, self.params, lambda: self.sm)
@@ -499,6 +502,9 @@ class Controls:
       except Exception:
         diagnostic_observer.disabled = True
         diagnostic_observer.pending = None
+    from openpilot.starpilot.car.hyundai.sonata_mads import publish_control_display
+    publish_control_display(CC, self.sm, available=getattr(self, 'sonata_mads_display_available', False),
+                            now_ns=int(self.sm.logMonoTime['carState']) if os.getenv('REPLAY') == '1' else time.monotonic_ns())
     self.aol_previous_lateral_active = bool(CC.latActive)
     if cycle_timing is not None:
       cycle_timing.mark()

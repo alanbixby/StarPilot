@@ -124,7 +124,7 @@ function launch {
   # start manager
   cd openpilot/system/manager
   if [ ! -f "$DIR/prebuilt" ]; then
-    ./build.py
+    ./build.py || return $?
   fi
   ./manager.py
 
